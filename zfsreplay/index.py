@@ -1,6 +1,7 @@
 import collections
 import os
 import stat
+import time
 
 from .utils import cached_property
 
@@ -15,14 +16,22 @@ class Node(BaseNode):
 
 
 
-def walk(root, ignore=None, rel_root=None, root_dev=None):
+def walk(root, ignore=None, rel_root=None, root_dev=None, _depth=0):
 
     if root_dev is None:
         root_dev = os.stat(root).st_dev
     if rel_root is None:
         rel_root = root
     
-    for name in sorted(os.listdir(root)):
+    tries = 1 if _depth else 3
+    for i in range(tries):
+        if i:
+            time.sleep(2**(i-1))
+        names = os.listdir(root)
+        if names:
+            break
+
+    for name in sorted(names):
 
         if ignore and name in ignore:
             continue
@@ -43,7 +52,7 @@ def walk(root, ignore=None, rel_root=None, root_dev=None):
         yield Node(name, path, os.path.relpath(path, rel_root), fmt, is_dir, is_file, is_link, st)
 
         if is_dir:
-            yield from walk(path, rel_root=rel_root, root_dev=root_dev)
+            yield from walk(path, rel_root=rel_root, root_dev=root_dev, _depth=_depth+1)
 
 
 class Index(object):
@@ -51,13 +60,13 @@ class Index(object):
     _cache = {}
 
     @classmethod
-    def get(cls, root, ignore=None):
+    def get(cls, root, ignore=None, cache_key=None):
 
         ignore = set(ignore or ())
-        key = (root, tuple(ignore))
+        cache_key = cache_key or (root, tuple(ignore))
 
         try:
-            return cls._cache[key]
+            pass #return cls._cache[cache_key]
         except KeyError:
             pass
 
@@ -65,7 +74,7 @@ class Index(object):
 
         self = cls(root, ignore)
         self.go()
-        cls._cache[key] = self
+        #cls._cache[cache_key] = self
         
         print(f'    {len(self.by_ino)} inodes in {len(self.by_rel)} paths')
 

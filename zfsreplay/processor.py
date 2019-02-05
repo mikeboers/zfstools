@@ -33,7 +33,7 @@ class Processor(object):
     def symlink(self, dst, src):
         if self.verbose:
             print('symlink', dst, src)
-        if not self.try_run:
+        if not self.dry_run:
             os.symlink(dst, src)
 
     def chmod(self, path, mode, verbosity=1):
@@ -61,8 +61,7 @@ class Processor(object):
         if self.dry_run:
             return
 
-        # This is the large end of our ZFS block sizes.
-        size = 128 * 1024
+        size = 128 * 1024 # ZFS block size.
 
         with open(src_path, 'rb') as src, open(dst_path, 'wb') as dst:
             while True:
@@ -75,10 +74,11 @@ class Processor(object):
 
         if self.verbose:
             print('merge  ', src_path, dst_path)
-        if not self.dry_run:
+        if self.dry_run:
             return
 
-        size = 128 * 1024
+        size = 128 * 1024 # ZFS block size.
+
         n_diff = 0
 
         with open(src_path, 'rb') as src, open(dst_path, 'r+b') as dst:

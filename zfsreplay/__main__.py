@@ -1,21 +1,5 @@
 
-'''
-
-
-
-There was a big re-org around 2016-10-16T18-24-34
-    this was the introduction of the "trailer" directory
-    otherwise there are NO moves in the rsync based backup (as there wouldn't be. bah)
-
-TODO:
-    - Do we re-org things as we go?
-        This would be one way to be efficient-ish.
-    - Do we hash everything as we go?
-        This would be the most efficient, but a bit of work for me.
-
-'''
-
-
+from concurrent import futures
 import argparse
 import collections
 import datetime as dt
@@ -74,7 +58,9 @@ class SyncJob(Job):
             f'{"is_zfs" if self.is_zfs else ""}'
         )
 
-    def run(self, proc):
+    def run(self, proc, threads=1):
+
+        self._proc = proc
 
         ''' 1. Get a full index of A and B. Assume T starts looking like A.
             - This is the paths and stats of all folders and files. Folders don't need their contents.
@@ -125,85 +111,105 @@ class SyncJob(Job):
 
             pairs.append((a, b))
 
-        # Update files that exist in both.
-        for a, b in pairs:
-            
-            bpath = b.path
-            relpath = b.relpath
-            tpath = os.path.join(self.target, relpath)
+        # We MUST operate in this order:
+        # - create new dirs
+        # - create new files and update existing
+        # - remove old dirs/files
 
-            # Move everything into the target namespace first.
-            if a.relpath != relpath:
-                proc.rename(os.path.join(self.target, a.relpath), tpath)
+        # Create new directories.
+        for node in b_by_rel.values():
+            if node.is_dir:
+                self.create_new(node)
 
-            # If this is not ZFS, hardlinks can't have different (meta)data.
-            if (not self.is_zfs) and a.stat.st_ino == b.stat.st_ino:
-                continue
+        work = []
 
-            # If this is ZFS, files with same ctime can't have been modified.
-            if self.is_zfs and a.stat.st_ctime == b.stat.st_ctime:
-                continue
+        # Update files which exist in both.
+        work.extend((self.update_pair, (a, b)) for a, b in pairs)
 
-            if b.is_dir:
-                # We're not doing anything; this is just for control flow.
-                pass
+        # Create new dirs/files that are in B but not A.
+        work.extend((self.create_new, (node, )) for node in b_by_rel.values() if not node.is_dir)
 
-            elif b.is_link:
-                if a.link_dest != b.link_dest:
-                    proc.unlink(bpath, verbosity=2)
-                    proc.symlink(b.link_dest, bpath)
+        work.sort(key=lambda x: x[1][-1].path)
 
-            # If they're different sizes, lets just assume they are different.
-            elif a.stat.st_size != b.stat.st_size:
-                proc.copy(bpath, tpath)
+        executor = futures.ThreadPoolExecutor(threads)
+        for _ in executor.map(lambda x: x[0](*x[1]), work):
+            pass
 
-            # Try to efficiently update them.
-            else:
-                proc.merge(bpath, tpath)
-
-            # Metadata!
-            if a.stat.st_mode != b.stat.st_mode:
-                proc.chmod(tpath, b.stat.st_mode)
-            if (a.stat.st_uid != b.stat.st_uid) or (a.stat.st_gid != b.stat.st_gid):
-                proc.chown(tpath, b.stat.st_uid, b.stat_st_gid)
-
-            # Times will almost always need to be set at this point.
-            proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
-
-        # 5. Delete all files and directories that are in A but not B.
+        # Delete all files and directories that are in A but not B.
+        # We do this first so it can run while the updator is going.
         # We're going in reverse so files are done before directories.
         for relpath, node in sorted(a_by_rel.items(), reverse=True):
-            tpath = os.path.join(self.target, relpath)
+            tpath = os.path.join(self.target, node.relpath)
             if node.is_dir:
-                proc.rmdir(tpath)
+                self._proc.rmdir(tpath)
             else:
-                proc.unlink(tpath)
+                self._proc.unlink(tpath)
 
-        # 6. Create new dirs/files that are in B but not A.
-        for relpath, node in b_by_rel.items():
+    def update_pair(self, a, b):
 
-            bpath = node.path
-            tpath = os.path.join(self.target, relpath)
+        proc = self._proc
 
-            if node.is_dir:
-                proc.mkdir(tpath)
+        bpath = b.path
+        tpath = os.path.join(self.target, b.relpath)
 
-            elif node.is_link:
-                proc.symlink(node.link_dest, bpath)
+        # Move everything into the target namespace first.
+        if a.relpath != b.relpath:
+            proc.rename(os.path.join(self.target, a.relpath), tpath)
 
-            else:
-                proc.copy(bpath, tpath)
+        # If this is not ZFS, hardlinks can't have different (meta)data.
+        if (not self.is_zfs) and a.stat.st_ino == b.stat.st_ino:
+            return
 
-            if not node.is_link:
-                proc.chmod(tpath, b.stat.st_mode, verbosity=2)
-            proc.chown(tpath, b.stat.st_uid, b.stat.st_gid, verbosity=2)
-            proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
+        # If this is ZFS, files with same ctime can't have been modified.
+        if self.is_zfs and a.stat.st_ctime == b.stat.st_ctime:
+            return
 
+        if b.is_dir:
+            # We're not doing anything; this is just for control flow.
+            pass
 
+        elif b.is_link:
+            if a.link_dest != b.link_dest:
+                proc.unlink(bpath, verbosity=2)
+                proc.symlink(b.link_dest, bpath)
 
+        # If they're different sizes, lets just assume they are different.
+        elif a.stat.st_size != b.stat.st_size:
+            proc.copy(bpath, tpath)
 
+        # Try to efficiently update them.
+        else:
+            proc.merge(bpath, tpath)
 
+        # Metadata!
+        if a.stat.st_mode != b.stat.st_mode:
+            proc.chmod(tpath, b.stat.st_mode)
+        if (a.stat.st_uid != b.stat.st_uid) or (a.stat.st_gid != b.stat.st_gid):
+            proc.chown(tpath, b.stat.st_uid, b.stat.st_gid)
 
+        # Times will almost always need to be set at this point.
+        proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
+
+    def create_new(self, b):
+
+        proc = self._proc
+
+        bpath = b.path
+        tpath = os.path.join(self.target, b.relpath)
+
+        if b.is_dir:
+            proc.mkdir(tpath)
+
+        elif b.is_link:
+            proc.symlink(b.link_dest, bpath)
+
+        else:
+            proc.copy(bpath, tpath)
+
+        if not b.is_link:
+            proc.chmod(tpath, b.stat.st_mode, verbosity=2)
+        proc.chown(tpath, b.stat.st_uid, b.stat.st_gid, verbosity=2)
+        proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
 
 
 
@@ -227,6 +233,7 @@ def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip
                 a=target,
                 b=os.path.normpath(os.path.join(a.root, src_subdir)),
                 target=target,
+                ignore=ignore,
             ))
 
         jobs.append(SyncJob(
@@ -235,6 +242,7 @@ def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip
             a=os.path.normpath(os.path.join(a.root, src_subdir)),
             b=os.path.normpath(os.path.join(b.root, src_subdir)),
             target=target,
+            ignore=ignore,
             is_zfs=is_zfs,
         ))
 
@@ -275,22 +283,37 @@ def make_timestamped_jobs(src_name, *args, **kwargs):
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-n', '--dry-run', action='store_true')
+    parser.add_argument('-a', '--all', action='store_true')
+    parser.add_argument('-n', '--dry-run', action='count', default=0)
+    parser.add_argument('-t', '--threads', type=int, default=4)
     parser.add_argument('-v', '--verbose', action='count', default=0)
-    parser.add_argument('set')
+    parser.add_argument('-c', '--count', type=int, default=0)
+    parser.add_argument('sets', nargs='*')
     args = parser.parse_args()
 
     # self.dry_run = True
 
+    if args.all:
+        args.sets = ['main', 'artifacts', 'cache']
+    if not args.sets:
+        print("Provide a set name.")
+        exit(1)
 
-    if args.set == 'main':
+    for set_ in args.sets:
+        do_set(args, set_)
+
+def do_set(args, set_):
+
+    Index._cache.clear()
+
+    if set_ == 'main':
 
         make_timestamped_jobs('work', 'tank/sitg',
             dst_subdir='work',
         )
 
         make_zfs_jobs('tank/heap/sitg', 'tank/sitg',
-            ignore=set(('backup', 'cache', 'out', 'work')),
+            ignore=set(('backups', 'cache', 'out', 'out-nosync', 'work')),
             skip_start=True,
         )
 
@@ -299,9 +322,7 @@ def main():
             ignore=set(('artifacts-film', )),
         )
 
-
-
-    if args.set == 'artifacts':
+    if set_ == 'artifacts':
 
         make_timestamped_jobs('out', 'tank/sitg/artifacts',
             dst_subdir='trailer',
@@ -312,8 +333,7 @@ def main():
             ignore=set(('trailer', )),
         )
 
-
-    if args.set == 'cache':
+    if set_ == 'cache':
 
         # Seed the caches. We only have the one set from the trailer.
         jobs.append(SyncJob(
@@ -339,11 +359,17 @@ def main():
     snaps = get_snapshots(jobs[0].volname)
 
     cmd = ['zfs', 'rollback', snaps[-1].fullname]
-    print(' '.join(cmd))
+    if args.verbose > 1:
+        print(' '.join(cmd))
     if not args.dry_run:
         subprocess.check_call(cmd)
 
-    processor = Processor(dry_run=args.dry_run, verbose=args.verbose)
+    processor = Processor(
+        dry_run=args.dry_run,
+        verbose=args.verbose,
+    )
+
+    done = 0
 
     for job in jobs:
 
@@ -351,13 +377,19 @@ def main():
             continue
 
         print(job)
-        job.run(processor)
+
+        if args.dry_run < 2:
+            job.run(processor, threads=args.threads)
 
         cmd = ['zfs', 'snapshot', f'{job.volname}@{job.snapname}']
-        print(' '.join(cmd))
+        if args.verbose > 1:
+            print(' '.join(cmd))
         if not args.dry_run:
             subprocess.check_call(cmd)
 
-        break
+        done += 1
+        if args.count and not args.dry_run and args.count >= done:
+            break
+
 
 
