@@ -163,7 +163,6 @@ class SyncJob(Job):
             pass
 
         # Delete all files and directories that are in A but not B.
-        # We do this first so it can run while the updator is going.
         # We're going in reverse so files are done before directories.
         for relpath, node in sorted(a_by_rel.items(), reverse=True):
             tpath = os.path.join(self.target, node.relpath)

@@ -1,7 +1,12 @@
 import os
 import time
+import stat
 
 from .utils import format_bytes
+
+
+def field(x):
+    return f'{x:10s}'
 
 
 class Processor(object):
@@ -12,55 +17,56 @@ class Processor(object):
         
     def rename(self, src, dst):
         if self.verbose:
-            print('rename ', src, dst)
+            print(field('rename'), src, dst)
         if not self.dry_run:
             os.rename(src, dst)
 
     def rmdir(self, path):
         if self.verbose:
-            print('rmdir  ', path)
+            print(field('rmdir'), path)
         if not self.dry_run:
             os.rmdir(path)
 
     def unlink(self, path, verbosity=1):
         if self.verbose >= verbosity:
-            print('unlink ', path)
+            print(field('unlink'), path)
         if not self.dry_run:
             os.unlink(path)
 
     def mkdir(self, path):
         if self.verbose:
-            print('mkdir ', path)
+            print(field('mkdir'), path)
         if not self.dry_run:
             os.mkdir(path)
     def symlink(self, dst, src):
         if self.verbose:
-            print('symlink', dst, src)
+            print(field('symlink'), dst, src)
         if not self.dry_run:
             os.symlink(dst, src)
 
     def chmod(self, path, mode, verbosity=1):
+        mode = stat.S_IMODE(mode)
         if self.verbose >= verbosity:
-            print('chmod  ', mode, path)
+            print(field('chmod'), stat.filemode(mode), path)
         if not self.dry_run:
             os.chmod(path, mode) #, follow_symlinks=False)
 
     def chown(self, path, uid, gid, verbosity=1):
         if self.verbose >= verbosity:
-            print(f'chown   {uid}:{gid} {path}')
+            print(field('chown'), f'{uid}:{gid} {path}')
         if not self.dry_run:
             os.chown(path, uid, gid, follow_symlinks=False)
 
     def utime(self, path, atime, mtime, verbosity=1):
         if self.verbose >= verbosity:
-            print(f'utime   {atime}:{mtime} {path}')
+            print(field('utime'), f'{atime}:{mtime} {path}')
         if not self.dry_run:
             os.utime(path, (atime, mtime), follow_symlinks=False)
 
     def copy(self, src_path, dst_path):
 
         if self.verbose:
-            print('copy   ', src_path, dst_path)
+            print(field('copy'), src_path, dst_path)
         if self.dry_run:
             return
 
@@ -79,12 +85,12 @@ class Processor(object):
         if self.verbose > 1:
             duration = time.monotonic() - start
             rate = copied / duration
-            print(f'        copied {format_bytes(copied)} in {duration:.2f}s at {format_bytes(rate)}/s')
+            print(field('copied'), f'{format_bytes(copied):>8s} in {duration:>6.2f}s at {format_bytes(rate):>8s}/s')
 
     def merge(self, src_path, dst_path):
 
         if self.verbose:
-            print('merge  ', src_path, dst_path)
+            print(field('merge'), src_path, dst_path)
         if self.dry_run:
             return
 
@@ -136,10 +142,10 @@ class Processor(object):
         if self.verbose > 1:
             duration = time.monotonic() - start
             rate = read / duration
-            print(f'        wrote {format_bytes(written):8s} of {format_bytes(read):8s} in {duration:6.2f}s at {format_bytes(rate):8s}/s')
+            print(field('merged'), f'{format_bytes(written):>8s} of {format_bytes(read):>8s} in {duration:>6.2f}s at {format_bytes(rate):>8s}/s:', dst_path)
 
         return n_diff
-        
+
 
 
 
