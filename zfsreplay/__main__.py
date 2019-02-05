@@ -13,7 +13,7 @@ from .processor import Processor
 
 Snapshot = collections.namedtuple('Snapshot', ('fullname', 'volname', 'name', 'creation', 'root'))
 
-def get_snapshots(volume):
+def get_zfs_snapshots(volume):
 
     snaps_root = os.path.join('/mnt', volume, '.zfs', 'snapshot')
 
@@ -207,9 +207,14 @@ class SyncJob(Job):
             proc.copy(bpath, tpath)
 
         if not b.is_link:
+            # We just don't have the capability in our Python for some reason,
+            # even though it should be availible.
             proc.chmod(tpath, b.stat.st_mode, verbosity=2)
+
         proc.chown(tpath, b.stat.st_uid, b.stat.st_gid, verbosity=2)
-        proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
+        
+        if utime:
+            proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
 
 
 
@@ -247,10 +252,14 @@ def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip
         ))
 
 
-def make_zfs_jobs(src_volume, *args, **kwargs):
-    snaps = get_snapshots(src_volume)
+def make_zfs_jobs(src_volume, dst_volume, src_subdir='', *args, **kwargs):
 
-    make_jobs(snaps, *args, **kwargs, is_zfs=True)
+    snaps = get_zfs_snapshots(src_volume)
+
+    if src_subdir:
+        snaps = [s for s in snaps if os.path.exists(os.path.join(s.root, src_subdir))]
+
+    make_jobs(snaps, dst_volume, src_subdir, *args, **kwargs, is_zfs=True)
 
 
 def make_timestamped_jobs(src_name, *args, **kwargs):
@@ -356,7 +365,7 @@ def do_set(args, set_):
     assert len(set(j.volname for j in jobs)) == 1
 
 
-    snaps = get_snapshots(jobs[0].volname)
+    snaps = get_zfs_snapshots(jobs[0].volname)
 
     cmd = ['zfs', 'rollback', snaps[-1].fullname]
     if args.verbose > 1:
