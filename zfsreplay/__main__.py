@@ -178,8 +178,8 @@ class SyncJob(Job):
 
         elif b.is_link:
             if a.link_dest != b.link_dest:
-                proc.unlink(bpath, verbosity=3)
-                proc.symlink(b.link_dest, bpath)
+                proc.unlink(tpath, verbosity=3)
+                proc.symlink(b.link_dest, tpath)
 
         # If they're different sizes, lets just assume they are different.
         elif a.stat.st_size != b.stat.st_size:
@@ -209,7 +209,7 @@ class SyncJob(Job):
             proc.mkdir(tpath)
 
         elif b.is_link:
-            proc.symlink(b.link_dest, bpath)
+            proc.symlink(b.link_dest, tpath)
 
         else:
             proc.copy(bpath, tpath)
