@@ -2,11 +2,17 @@ import collections
 import os
 import stat
 
+from .utils import cached_property
 
-BaseNode = collections.namedtuple('BaseNode', 'name path relpath fmt is_dir is_reg is_lnk stat')
+
+BaseNode = collections.namedtuple('BaseNode', 'name path relpath fmt is_dir is_file is_link stat')
 
 class Node(BaseNode):
-    pass
+
+    @cached_property
+    def link_dest(self):
+        return os.readlink(self.path)
+
 
 
 def walk(root, ignore=None, rel_root=None, root_dev=None):
@@ -29,12 +35,12 @@ def walk(root, ignore=None, rel_root=None, root_dev=None):
 
         fmt = stat.S_IFMT(st.st_mode)
         is_dir = fmt == stat.S_IFDIR
-        is_reg = fmt == stat.S_IFREG
-        is_lnk = fmt == stat.S_IFLNK
-        if not (is_dir or is_reg or is_lnk):
+        is_file = fmt == stat.S_IFREG
+        is_link = fmt == stat.S_IFLNK
+        if not (is_dir or is_file or is_link):
             continue
 
-        yield Node(name, path, os.path.relpath(path, rel_root), fmt, is_dir, is_reg, is_lnk, st)
+        yield Node(name, path, os.path.relpath(path, rel_root), fmt, is_dir, is_file, is_link, st)
 
         if is_dir:
             yield from walk(path, rel_root=rel_root, root_dev=root_dev)

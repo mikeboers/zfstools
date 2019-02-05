@@ -24,7 +24,7 @@ import stat
 import subprocess
 
 from .index import Index
-
+from .processor import Processor
 
 
 Snapshot = collections.namedtuple('Snapshot', ('fullname', 'volname', 'name', 'creation', 'root'))
@@ -67,13 +67,14 @@ class SyncJob(Job):
 
     def __repr__(self):
         return (
-            f'Sync: {self.volname:20s}@{self.snapname:24s} target={self.target:40s} as a={self.a:80s} to b={self.b:80s} '
+            f'Sync: '
+            f'{self.volname:20s}@{self.snapname:24s} '
+            f'target={self.target:40s} '
+            f'as a={self.a:80s} to b={self.b:80s} '
             f'{"is_zfs" if self.is_zfs else ""}'
         )
 
-    def run(self, dry_run=False):
-
-        self.dry_run = dry_run
+    def run(self, proc):
 
         ''' 1. Get a full index of A and B. Assume T starts looking like A.
             - This is the paths and stats of all folders and files. Folders don't need their contents.
@@ -124,24 +125,16 @@ class SyncJob(Job):
 
             pairs.append((a, b))
 
-        '''4. Iterate across AB pairs:
-            - Move files that don't have matching paths.
-            - Scan/update if there may have been changes.
-                - Iterate in either 16KiB or 128KiB chunks.
-                - If they are the same, keep going.
-                - If they are different, seek back, and write the new block.
-                - If after 10 blocks more than 90% of blocks have changed, assume it
-                  has fully changed.
-            - Update uid/gid/perms.
-        '''
+        # Update files that exist in both.
         for a, b in pairs:
             
             bpath = b.path
             relpath = b.relpath
             tpath = os.path.join(self.target, relpath)
 
+            # Move everything into the target namespace first.
             if a.relpath != relpath:
-                self.rename(os.path.join(self.target, a.relpath), tpath)
+                proc.rename(os.path.join(self.target, a.relpath), tpath)
 
             # If this is not ZFS, hardlinks can't have different (meta)data.
             if (not self.is_zfs) and a.stat.st_ino == b.stat.st_ino:
@@ -155,151 +148,58 @@ class SyncJob(Job):
                 # We're not doing anything; this is just for control flow.
                 pass
 
-            elif b.is_lnk:
-                # Just assume it didn't change.
-                # TODO DO THIS
-                pass
+            elif b.is_link:
+                if a.link_dest != b.link_dest:
+                    proc.unlink(bpath, verbosity=2)
+                    proc.symlink(b.link_dest, bpath)
 
             # If they're different sizes, lets just assume they are different.
             elif a.stat.st_size != b.stat.st_size:
-                self.copy(bpath, tpath)
+                proc.copy(bpath, tpath)
 
+            # Try to efficiently update them.
             else:
-                self.merge(bpath, tpath)
+                proc.merge(bpath, tpath)
 
+            # Metadata!
             if a.stat.st_mode != b.stat.st_mode:
-                self.chmod(tpath, b.stat.st_mode)
-
+                proc.chmod(tpath, b.stat.st_mode)
             if (a.stat.st_uid != b.stat.st_uid) or (a.stat.st_gid != b.stat.st_gid):
-                self.chown(tpath, b.stat.st_uid, b.stat_st_gid)
+                proc.chown(tpath, b.stat.st_uid, b.stat_st_gid)
 
             # Times will almost always need to be set at this point.
-            if not self.dry_run:
-                self.utime(tpath, b.stat.st_atime, b.stat.st_mtime)
-
+            proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
 
         # 5. Delete all files and directories that are in A but not B.
         # We're going in reverse so files are done before directories.
         for relpath, node in sorted(a_by_rel.items(), reverse=True):
             tpath = os.path.join(self.target, relpath)
             if node.is_dir:
-                self.rmdir(tpath)
+                proc.rmdir(tpath)
             else:
-                self.unlink(tpath)
+                proc.unlink(tpath)
 
-        #6. Create missing dirs/files.
+        # 6. Create new dirs/files that are in B but not A.
         for relpath, node in b_by_rel.items():
 
             bpath = node.path
             tpath = os.path.join(self.target, relpath)
 
             if node.is_dir:
-                self.mkdir(tpath)
+                proc.mkdir(tpath)
 
-            elif node.is_lnk:
-                # TODO: DO THIS
-                continue
+            elif node.is_link:
+                proc.symlink(node.link_dest, bpath)
 
             else:
-                self.copy(bpath, tpath)
+                proc.copy(bpath, tpath)
 
-            if not node.is_lnk:
-                self.chmod(tpath, b.stat.st_mode)
-            self.chown(tpath, b.stat.st_uid, b.stat.st_gid)
-            self.utime(tpath, b.stat.st_atime, b.stat.st_mtime)
+            if not node.is_link:
+                proc.chmod(tpath, b.stat.st_mode, verbosity=2)
+            proc.chown(tpath, b.stat.st_uid, b.stat.st_gid, verbosity=2)
+            proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
 
-    def rename(self, src, dst):
-        print('rename', src, dst)
-        if not self.dry_run:
-            os.rename(src, dst)
 
-    def rmdir(self, path):
-        print('rmdir', path)
-        if not self.dry_run:
-            os.rmdir(path)
-
-    def unlink(self, path):
-        print('unlink', path)
-        if not self.dry_run:
-            os.unlink(path)
-
-    def mkdir(self, path):
-        print('mkdir', path)
-        if not self.dry_run:
-            os.mkdir(path)
-
-    def chmod(self, path, mode):
-        print('chmod', mode, path)
-        if not self.dry_run:
-            os.chmod(path, mode) #, follow_symlinks=False)
-
-    def chown(self, path, uid, gid):
-        print(f'chown {uid}:{gid} {path}')
-        if not self.dry_run:
-            os.chown(path, uid, gid, follow_symlinks=False)
-
-    def utime(self, path, atime, mtime):
-        print(f'utime {atime}:{mtime} {path}')
-        if not self.dry_run:
-            os.utime(path, (atime, mtime), follow_symlinks=False)
-
-    def copy(self, src_path, dst_path):
-
-        print('copy', src_path, dst_path)
-        if self.dry_run:
-            return
-
-        # This is the large end of our ZFS block sizes.
-        size = 128 * 1024
-
-        with open(src_path, 'rb') as src, open(dst_path, 'wb') as dst:
-            while True:
-                chunk = src.read(size)
-                if not chunk:
-                    break
-                dst.write(chunk)
-
-    def merge(self, src_path, dst_path):
-
-        print('merge', src_path, dst_path)
-        if not self.dry_run:
-            return
-
-        size = 128 * 1024
-        n_diff = 0
-
-        with open(src_path, 'rb') as src, open(dst_path, 'r+b') as dst:
-
-            # Keep only writing changes until we've passed 3 blocks that
-            # are different.
-            while n_diff < 3:
-
-                pos = dst.tell()
-
-                a = src.read(size)
-                b = dst.read(size)
-
-                if len(a) != len(b):
-                    raise ValueError(f"Read len mismatch at {pos}: {len(a)} != {len(b)}")
-
-                # We're done.
-                if not a:
-                    break
-
-                # The blocks match; don't do anything.
-                if a == b:
-                    continue
-
-                dst.seek(pos)
-                dst.write(a)
-
-                n_diff += 1
-
-            # We gave up comparing; just finish it up normally.
-            while a:
-                a = src.read(size)
-                if a:
-                    dst.write(a)
 
 
 
@@ -376,6 +276,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--dry-run', action='store_true')
+    parser.add_argument('-v', '--verbose', action='count', default=0)
     parser.add_argument('set')
     args = parser.parse_args()
 
@@ -442,6 +343,7 @@ def main():
     if not args.dry_run:
         subprocess.check_call(cmd)
 
+    processor = Processor(dry_run=args.dry_run, verbose=args.verbose)
 
     for job in jobs:
 
@@ -449,7 +351,7 @@ def main():
             continue
 
         print(job)
-        job.run(dry_run=args.dry_run)
+        job.run(processor)
 
         cmd = ['zfs', 'snapshot', f'{job.volname}@{job.snapname}']
         print(' '.join(cmd))
