@@ -4,8 +4,11 @@ import argparse
 import collections
 import datetime as dt
 import os
+import pdb
 import stat
 import subprocess
+
+import click
 
 from .index import Index
 from .processor import Processor
@@ -49,15 +52,6 @@ class SyncJob(Job):
         self.ignore = ignore
         self.is_zfs = is_zfs
 
-    def __repr__(self):
-        return (
-            f'Sync: '
-            f'{self.volname:20s}@{self.snapname:24s} '
-            f'target={self.target:40s} '
-            f'as a={self.a:80s} to b={self.b:80s} '
-            f'{"is_zfs" if self.is_zfs else ""}'
-        )
-
     def run(self, proc, threads=1):
 
         self._proc = proc
@@ -79,23 +73,24 @@ class SyncJob(Job):
         b_by_rel = bidx.by_rel.copy()
         pairs = []
 
-        # Collect pairs by inode.
-        for inode, bnodes in bidx.by_ino.items():
+        # Collect pairs by inode (if they are on the same device).
+        if aidx.nodes[0].stat.st_dev == bidx.nodes[0].stat.st_dev:
+            for inode, bnodes in bidx.by_ino.items():
 
-            anodes = aidx.by_ino.get(inode, ())
-            if not anodes:
-                continue
+                anodes = aidx.by_ino.get(inode, ())
+                if not anodes:
+                    continue
 
-            # We have them by inodes, so we don't need to look at them by path.
-            for n in anodes:
-                a_by_rel.pop(n.relpath)
-            for n in bnodes:
-                b_by_rel.pop(n.relpath)
+                # We have them by inodes, so we don't need to look at them by path.
+                for n in anodes:
+                    a_by_rel.pop(n.relpath)
+                for n in bnodes:
+                    b_by_rel.pop(n.relpath)
 
-            # If we have multiple, treat them all as a[0] to all bs. This will
-            # work out fine. Promise.
-            for n in bnodes:
-                pairs.append((anodes[0], n))
+                # If we have multiple, treat them all as a[0] to all bs. This will
+                # work out fine. Promise.
+                for n in bnodes:
+                    pairs.append((anodes[0], n))
 
         # Collect pairs by relpath.
         for relpath, b in list(b_by_rel.items()):
@@ -156,7 +151,7 @@ class SyncJob(Job):
                 tpath = os.path.join(self.target, b.relpath)
                 st = os.stat(tpath)
                 if (st.st_atime != b.stat.st_atime) or (st.st_mtime != b.stat.st_mtime):
-                    proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
+                    proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=3)
 
     def update_pair(self, a, b):
 
@@ -183,7 +178,7 @@ class SyncJob(Job):
 
         elif b.is_link:
             if a.link_dest != b.link_dest:
-                proc.unlink(bpath, verbosity=2)
+                proc.unlink(bpath, verbosity=3)
                 proc.symlink(b.link_dest, bpath)
 
         # If they're different sizes, lets just assume they are different.
@@ -201,7 +196,7 @@ class SyncJob(Job):
             proc.chown(tpath, b.stat.st_uid, b.stat.st_gid)
 
         # Times will almost always need to be set at this point.
-        proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
+        proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=3)
 
     def create_new(self, b, utime=True):
 
@@ -222,12 +217,12 @@ class SyncJob(Job):
         if not b.is_link:
             # We just don't have the capability in our Python for some reason,
             # even though it should be availible.
-            proc.chmod(tpath, b.stat.st_mode, verbosity=2)
+            proc.chmod(tpath, b.stat.st_mode, verbosity=3)
 
-        proc.chown(tpath, b.stat.st_uid, b.stat.st_gid, verbosity=2)
+        proc.chown(tpath, b.stat.st_uid, b.stat.st_gid, verbosity=3)
         
         if utime:
-            proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
+            proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=3)
 
 
 
@@ -330,27 +325,27 @@ def do_set(args, set_):
 
     if set_ == 'main':
 
-        make_timestamped_jobs('work', 'tank/sitg',
+        make_timestamped_jobs('work', 'tank/sitgmain',
             dst_subdir='work',
         )
 
-        make_zfs_jobs('tank/heap/sitg', 'tank/sitg',
+        make_zfs_jobs('tank/heap/sitg', 'tank/sitgmain',
             ignore=set(('backups', 'cache', 'out', 'out-nosync', 'work')),
             skip_start=True,
         )
 
-        make_zfs_jobs('tank/heap/sitg/work', 'tank/sitg',
+        make_zfs_jobs('tank/heap/sitg/work', 'tank/sitgmain',
             dst_subdir='work',
-            ignore=set(('artifacts-film', )),
+            ignore=set(('artifacts-film', 'cache-film')),
         )
 
     if set_ == 'artifacts':
 
-        make_timestamped_jobs('out', 'tank/sitg/artifacts',
+        make_timestamped_jobs('out', 'tank/sitgartifacts',
             dst_subdir='trailer',
         )
 
-        make_zfs_jobs('tank/heap/sitg/work', 'tank/sitg/artifacts',
+        make_zfs_jobs('tank/heap/sitg/work', 'tank/sitgartifacts',
             src_subdir='artifacts-film',
             ignore=set(('trailer', )),
         )
@@ -359,15 +354,15 @@ def do_set(args, set_):
 
         # Seed the caches. We only have the one set from the trailer.
         jobs.append(SyncJob(
-            'tank/sitg/cache',
+            'tank/sitgcache',
             '2015-08-02T00.sitg',
-            target='/mnt/tank/sitg/cache/TE',
-            a='/mnt/tank/sitg/cache/TE',
+            target='/mnt/tank/sitgcache/TE',
+            a='/mnt/tank/sitgcache/TE',
             b='/mnt/tank/heap/sitg/cache',
         ))
 
         # The work caches.
-        make_zfs_jobs('tank/heap/sitg/work', 'tank/sitg/cache',
+        make_zfs_jobs('tank/heap/sitg/work', 'tank/sitgcache',
             src_subdir='cache-film',
             ignore=set(('TE', )),
         )
@@ -395,13 +390,27 @@ def do_set(args, set_):
 
     for job in jobs:
 
-        if any(s.name == job.snapname for s in snaps):
+        click.secho(f'==> {job.__class__.__name__} {job.volname}@{job.snapname}', fg='blue')
+        click.echo(f'target: {job.target}')
+        click.echo(f'src a:  {job.a}')
+        click.echo(f'src b:  {job.b}')
+        if job.ignore:
+            click.echo(f'ignore: {" ".join(sorted(job.ignore))}')
+        if job.is_zfs:
+            click.echo(f'is_zfs: true')
+
+        existing = next((s for s in snaps if s.name == job.snapname), None)
+        if existing:
+            click.secho(f'Already done at {existing.creation.isoformat("T")}', fg='green')
             continue
 
-        print(job)
-
         if args.dry_run < 2:
-            job.run(processor, threads=args.threads)
+            click.echo('---')
+            try:
+                job.run(processor, threads=args.threads)
+            except Exception:
+                pdb.post_mortem()
+                raise # Don't let us keep going.
 
         cmd = ['zfs', 'snapshot', f'{job.volname}@{job.snapname}']
         if args.verbose > 1:

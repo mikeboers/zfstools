@@ -12,3 +12,15 @@ class cached_property(object):
         setattr(obj, self.name, value)
         return value
 
+
+def format_bytes(x):
+
+    suffix = ('', 'k', 'M', 'G', 'T', 'P')
+    order = 0
+
+    while order < 5 and x > 1000:
+        x /= 1024
+        order += 1
+
+    return f'{x:.2f}{suffix[order]}B'
+

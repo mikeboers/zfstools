@@ -23,13 +23,16 @@ def walk(root, ignore=None, rel_root=None, root_dev=None, _depth=0):
     if rel_root is None:
         rel_root = root
     
-    tries = 1 if _depth else 3
+    tries = 1 if _depth else 4
     for i in range(tries):
         if i:
-            time.sleep(2**(i-1))
+            time.sleep(2 ** (i - 1)) # 1, 2, 4
         names = os.listdir(root)
         if names:
             break
+
+    if not _depth and not names:
+        raise ValueError("No names at _depth 0?!")
 
     for name in sorted(names):
 
@@ -70,7 +73,7 @@ class Index(object):
         except KeyError:
             pass
 
-        print(f'==> Indexing {root} ignoring {ignore or None}')
+        print(f'Indexing {root} ignoring {ignore or None}')
 
         self = cls(root, ignore)
         self.go()

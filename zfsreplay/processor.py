@@ -1,4 +1,7 @@
 import os
+import time
+
+from .utils import format_bytes
 
 
 class Processor(object):
@@ -62,6 +65,8 @@ class Processor(object):
             return
 
         size = 128 * 1024 # ZFS block size.
+        copied = 0
+        start = time.monotonic()
 
         with open(src_path, 'rb') as src, open(dst_path, 'wb') as dst:
             while True:
@@ -69,6 +74,12 @@ class Processor(object):
                 if not chunk:
                     break
                 dst.write(chunk)
+                copied += len(chunk)
+
+        if self.verbose > 1:
+            duration = time.monotonic() - start
+            rate = copied / duration
+            print(f'        copied {format_bytes(copied)} in {duration:.2f}s at {format_bytes(rate)}/s')
 
     def merge(self, src_path, dst_path):
 
@@ -80,6 +91,9 @@ class Processor(object):
         size = 128 * 1024 # ZFS block size.
 
         n_diff = 0
+
+        start = time.monotonic()
+        read = written = 0
 
         with open(src_path, 'rb') as src, open(dst_path, 'r+b') as dst:
 
@@ -99,6 +113,8 @@ class Processor(object):
                 if not a:
                     break
 
+                read += len(a)
+
                 # The blocks match; don't do anything.
                 if a == b:
                     continue
@@ -106,6 +122,7 @@ class Processor(object):
                 dst.seek(pos)
                 dst.write(a)
 
+                written += len(a)
                 n_diff += 1
 
             # We gave up comparing; just finish it up normally.
@@ -113,5 +130,16 @@ class Processor(object):
                 a = src.read(size)
                 if a:
                     dst.write(a)
+                    read += len(a)
+                    written += len(a)
+
+        if self.verbose > 1:
+            duration = time.monotonic() - start
+            rate = read / duration
+            print(f'        wrote {format_bytes(written):8s} of {format_bytes(read):8s} in {duration:6.2f}s at {format_bytes(rate):8s}/s')
+
+        return n_diff
+        
+
 
 
