@@ -23,79 +23,7 @@ import os
 import stat
 import subprocess
 
-
-Node = collections.namedtuple('Node', 'name path relpath fmt is_dir is_reg is_lnk stat')
-
-
-def walk(root, ignore=None, rel_root=None, root_dev=None):
-
-    if root_dev is None:
-        root_dev = os.stat(root).st_dev
-    if rel_root is None:
-        rel_root = root
-    
-    for name in sorted(os.listdir(root)):
-
-        if ignore and name in ignore:
-            continue
-
-        path = os.path.join(root, name)
-        st = os.lstat(path)
-
-        if st.st_dev != root_dev:
-            continue
-
-        fmt = stat.S_IFMT(st.st_mode)
-        is_dir = fmt == stat.S_IFDIR
-        is_reg = fmt == stat.S_IFREG
-        is_lnk = fmt == stat.S_IFLNK
-        if not (is_dir or is_reg or is_lnk):
-            continue
-
-        yield Node(name, path, os.path.relpath(path, rel_root), fmt, is_dir, is_reg, is_lnk, st)
-
-        if is_dir:
-            yield from walk(path, rel_root=rel_root, root_dev=root_dev)
-
-
-class Index(object):
-
-    _cache = {}
-
-    @classmethod
-    def get(cls, root, ignore=None):
-
-        ignore = set(ignore or ())
-        key = (root, tuple(ignore))
-
-        try:
-            return cls._cache[key]
-        except KeyError:
-            pass
-
-        print(f'==> Indexing {root} ignoring {ignore or None}')
-
-        self = cls(root, ignore)
-        self.go()
-        cls._cache[key] = self
-        
-        print(f'    {len(self.by_ino)} inodes in {len(self.by_rel)} paths')
-
-        return self
-
-    def __init__(self, root, ignore):
-        self.root = root
-        self.ignore = ignore
-        self.nodes = []
-        self.by_ino = {}
-        self.by_rel = {}
-
-    def go(self):
-        for node in walk(self.root, ignore=self.ignore):
-            self.nodes.append(node)
-            self.by_ino.setdefault(node.stat.st_ino, []).append(node)
-            self.by_rel[node.relpath] = node
-
+from .index import Index
 
 
 
@@ -128,28 +56,24 @@ class Job(object):
         self.sort_key = sort_key or snapname
 
 
-class BashJob(Job):
-
-    pass
-
-
 class SyncJob(Job):
 
-    def __init__(self, volname, snapname, a, b, target=None, sort_key=None, ignore=None, is_zfs=False, is_link=False):
+    def __init__(self, volname, snapname, a, b, target=None, sort_key=None, ignore=None, is_zfs=False):
         super().__init__(volname, snapname, target, sort_key)
         self.a = a
         self.b = b
         self.ignore = ignore
         self.is_zfs = is_zfs
-        self.is_link = is_link
 
     def __repr__(self):
         return (
             f'Sync: {self.volname:20s}@{self.snapname:24s} target={self.target:40s} as a={self.a:80s} to b={self.b:80s} '
-            f'{"is_zfs" if self.is_zfs else ""}{"is_link" if self.is_link else ""}'
+            f'{"is_zfs" if self.is_zfs else ""}'
         )
 
-    def run(self):
+    def run(self, dry_run=False):
+
+        self.dry_run = dry_run
 
         ''' 1. Get a full index of A and B. Assume T starts looking like A.
             - This is the paths and stats of all folders and files. Folders don't need their contents.
@@ -212,108 +136,122 @@ class SyncJob(Job):
         '''
         for a, b in pairs:
             
+            bpath = b.path
             relpath = b.relpath
             tpath = os.path.join(self.target, relpath)
 
             if a.relpath != relpath:
-                print('mv   ', a.relpath, relpath)
-                if not args.dry_run:
-                    os.rename(
-                        os.path.join(self.target, a.relpath),
-                        tpath,
-                    )
+                self.rename(os.path.join(self.target, a.relpath), tpath)
 
-            # If these are hardlinked snapshots, files with the same inode
-            # can't be modified.
-            if self.is_link and a.stat.st_ino == b.stat.st_ino:
+            # If this is not ZFS, hardlinks can't have different (meta)data.
+            if (not self.is_zfs) and a.stat.st_ino == b.stat.st_ino:
                 continue
 
-            # If these are zfs snapshots, files with same ctime can't be modified.
+            # If this is ZFS, files with same ctime can't have been modified.
             if self.is_zfs and a.stat.st_ctime == b.stat.st_ctime:
                 continue
 
-            if b.is_lnk:
+            if b.is_dir:
+                # We're not doing anything; this is just for control flow.
+                pass
+
+            elif b.is_lnk:
                 # Just assume it didn't change.
                 # TODO DO THIS
                 pass
 
-            if b.is_dir:
-                pass
-
+            # If they're different sizes, lets just assume they are different.
             elif a.stat.st_size != b.stat.st_size:
-                print('cp    ', relpath)
-                if not args.dry_run:
-                    self.copy(
-                        os.path.join(self.b, relpath),
-                        tpath,
-                    )
+                self.copy(bpath, tpath)
 
             else:
-                print('merge', b.relpath)
-                if not args.dry_run:
-                    self.merge(
-                        os.path.join(self.b, relpath),
-                        tpath,
-                    )
+                self.merge(bpath, tpath)
 
             if a.stat.st_mode != b.stat.st_mode:
-                print('chmod', stat.filemode(b.stat.st_mode), relpath)
-                if not args.dry_run:
-                    os.lchmod(tpath, b.stat.st_mode)
+                self.chmod(tpath, b.stat.st_mode)
 
             if (a.stat.st_uid != b.stat.st_uid) or (a.stat.st_gid != b.stat.st_gid):
-                print(f'chown {b.stat.st_uid}:{b.stat.st_gid} {relpath}')
-                if not args.dry_run:
-                    os.lchown(tpath, b.stat.st_uid, b.stat_st_gid)
+                self.chown(tpath, b.stat.st_uid, b.stat_st_gid)
 
-            # Force the times.
-            if not args.dry_run:
-                os.utime(tpath, (b.stat.st_atime, b.stat.st_mtime))
+            # Times will almost always need to be set at this point.
+            if not self.dry_run:
+                self.utime(tpath, b.stat.st_atime, b.stat.st_mtime)
 
 
-        '''5. Delete all files and directories that are in A but not B.'''
+        # 5. Delete all files and directories that are in A but not B.
         # We're going in reverse so files are done before directories.
         for relpath, node in sorted(a_by_rel.items(), reverse=True):
-            print('rm   ', relpath)
-            if not args.dry_run:
-                tpath = os.path.join(self.target, relpath)
-                if node.is_dir:
-                    os.rmdir(tpath)
-                else:
-                    os.unlink(tpath)
+            tpath = os.path.join(self.target, relpath)
+            if node.is_dir:
+                self.rmdir(tpath)
+            else:
+                self.unlink(tpath)
 
-        '''6. Create missing dirs/files.'''
+        #6. Create missing dirs/files.
         for relpath, node in b_by_rel.items():
 
+            bpath = node.path
             tpath = os.path.join(self.target, relpath)
 
             if node.is_dir:
-                print('mkdir', node.relpath)
-                if not args.dry_run:
-                    os.makedirs(tpath)
+                self.mkdir(tpath)
 
             elif node.is_lnk:
                 # TODO: DO THIS
                 continue
 
             else:
-                print('cp   ', relpath)
-                if not args.dry_run:
-                    self.copy(
-                        os.path.join(self.b, relpath),
-                        tpath,
-                    )
+                self.copy(bpath, tpath)
 
-            if not args.dry_run:
-                if not node.is_lnk:
-                    os.chmod(tpath, b.stat.st_mode)
-                    os.chown(tpath, b.stat.st_uid, b.stat.st_gid)
-                    os.utime(tpath, (b.stat.st_atime, b.stat.st_mtime))
+            if not node.is_lnk:
+                self.chmod(tpath, b.stat.st_mode)
+            self.chown(tpath, b.stat.st_uid, b.stat.st_gid)
+            self.utime(tpath, b.stat.st_atime, b.stat.st_mtime)
 
+    def rename(self, src, dst):
+        print('rename', src, dst)
+        if not self.dry_run:
+            os.rename(src, dst)
 
+    def rmdir(self, path):
+        print('rmdir', path)
+        if not self.dry_run:
+            os.rmdir(path)
+
+    def unlink(self, path):
+        print('unlink', path)
+        if not self.dry_run:
+            os.unlink(path)
+
+    def mkdir(self, path):
+        print('mkdir', path)
+        if not self.dry_run:
+            os.mkdir(path)
+
+    def chmod(self, path, mode):
+        print('chmod', mode, path)
+        if not self.dry_run:
+            os.chmod(path, mode) #, follow_symlinks=False)
+
+    def chown(self, path, uid, gid):
+        print(f'chown {uid}:{gid} {path}')
+        if not self.dry_run:
+            os.chown(path, uid, gid, follow_symlinks=False)
+
+    def utime(self, path, atime, mtime):
+        print(f'utime {atime}:{mtime} {path}')
+        if not self.dry_run:
+            os.utime(path, (atime, mtime), follow_symlinks=False)
 
     def copy(self, src_path, dst_path):
+
+        print('copy', src_path, dst_path)
+        if self.dry_run:
+            return
+
+        # This is the large end of our ZFS block sizes.
         size = 128 * 1024
+
         with open(src_path, 'rb') as src, open(dst_path, 'wb') as dst:
             while True:
                 chunk = src.read(size)
@@ -323,11 +261,18 @@ class SyncJob(Job):
 
     def merge(self, src_path, dst_path):
 
+        print('merge', src_path, dst_path)
+        if not self.dry_run:
+            return
+
         size = 128 * 1024
         n_diff = 0
+
         with open(src_path, 'rb') as src, open(dst_path, 'r+b') as dst:
 
-            while True:
+            # Keep only writing changes until we've passed 3 blocks that
+            # are different.
+            while n_diff < 3:
 
                 pos = dst.tell()
 
@@ -335,11 +280,13 @@ class SyncJob(Job):
                 b = dst.read(size)
 
                 if len(a) != len(b):
-                    raise ValueError(f"Read mismatch: {len(a)} != {len(b)}")
+                    raise ValueError(f"Read len mismatch at {pos}: {len(a)} != {len(b)}")
+
+                # We're done.
                 if not a:
                     break
 
-                # Don't do anything.
+                # The blocks match; don't do anything.
                 if a == b:
                     continue
 
@@ -348,10 +295,7 @@ class SyncJob(Job):
 
                 n_diff += 1
 
-                if n_diff > 3:
-                    break
-
-            # We gave up comparing.
+            # We gave up comparing; just finish it up normally.
             while a:
                 a = src.read(size)
                 if a:
@@ -367,7 +311,7 @@ jobs = []
 
 
 
-def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip_start=False, is_zfs=False, is_link=False):
+def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip_start=False, is_zfs=False):
 
     target = os.path.normpath(os.path.join('/mnt', dst_volume, dst_subdir))
 
@@ -392,7 +336,6 @@ def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip
             b=os.path.normpath(os.path.join(b.root, src_subdir)),
             target=target,
             is_zfs=is_zfs,
-            is_link=is_link,
         ))
 
 
@@ -402,7 +345,7 @@ def make_zfs_jobs(src_volume, *args, **kwargs):
     make_jobs(snaps, *args, **kwargs, is_zfs=True)
 
 
-def make_link_jobs(src_name, *args, **kwargs):
+def make_timestamped_jobs(src_name, *args, **kwargs):
 
     snaps = []
 
@@ -426,22 +369,22 @@ def make_link_jobs(src_name, *args, **kwargs):
             os.path.join(root, name),
         ))
 
-    make_jobs(snaps, *args, **kwargs, is_link=True)
+    make_jobs(snaps, *args, **kwargs)
 
 
 def main():
-        
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--dry-run', action='store_true')
     parser.add_argument('set')
     args = parser.parse_args()
 
-    # args.dry_run = True
+    # self.dry_run = True
 
 
     if args.set == 'main':
 
-        make_link_jobs('work', 'tank/sitg',
+        make_timestamped_jobs('work', 'tank/sitg',
             dst_subdir='work',
         )
 
@@ -459,7 +402,7 @@ def main():
 
     if args.set == 'artifacts':
 
-        make_link_jobs('out', 'tank/sitg/artifacts',
+        make_timestamped_jobs('out', 'tank/sitg/artifacts',
             dst_subdir='trailer',
         )
 
@@ -506,7 +449,7 @@ def main():
             continue
 
         print(job)
-        job.run()
+        job.run(dry_run=args.dry_run)
 
         cmd = ['zfs', 'snapshot', f'{job.volname}@{job.snapname}']
         print(' '.join(cmd))
