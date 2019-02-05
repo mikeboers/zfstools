@@ -429,88 +429,90 @@ def make_link_jobs(src_name, *args, **kwargs):
     make_jobs(snaps, *args, **kwargs, is_link=True)
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-n', '--dry-run', action='store_true')
-parser.add_argument('set')
-args = parser.parse_args()
+def main():
+        
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-n', '--dry-run', action='store_true')
+    parser.add_argument('set')
+    args = parser.parse_args()
 
-# args.dry_run = True
-
-
-if args.set == 'main':
-
-    make_link_jobs('work', 'tank/sitg',
-        dst_subdir='work',
-    )
-
-    make_zfs_jobs('tank/heap/sitg', 'tank/sitg',
-        ignore=set(('backup', 'cache', 'out', 'work')),
-        skip_start=True,
-    )
-
-    make_zfs_jobs('tank/heap/sitg/work', 'tank/sitg',
-        dst_subdir='work',
-        ignore=set(('artifacts-film', )),
-    )
+    # args.dry_run = True
 
 
+    if args.set == 'main':
 
-if args.set == 'artifacts':
+        make_link_jobs('work', 'tank/sitg',
+            dst_subdir='work',
+        )
 
-    make_link_jobs('out', 'tank/sitg/artifacts',
-        dst_subdir='trailer',
-    )
+        make_zfs_jobs('tank/heap/sitg', 'tank/sitg',
+            ignore=set(('backup', 'cache', 'out', 'work')),
+            skip_start=True,
+        )
 
-    make_zfs_jobs('tank/heap/sitg/work', 'tank/sitg/artifacts',
-        src_subdir='artifacts-film',
-        ignore=set(('trailer', )),
-    )
-
-
-if args.set == 'cache':
-
-    # Seed the caches. We only have the one set from the trailer.
-    jobs.append(SyncJob(
-        'tank/sitg/cache',
-        '2015-08-02T00.sitg',
-        target='/mnt/tank/sitg/cache/TE',
-        a='/mnt/tank/sitg/cache/TE',
-        b='/mnt/tank/heap/sitg/cache',
-    ))
-
-    # The work caches.
-    make_zfs_jobs('tank/heap/sitg/work', 'tank/sitg/cache',
-        src_subdir='cache-film',
-        ignore=set(('TE', )),
-    )
+        make_zfs_jobs('tank/heap/sitg/work', 'tank/sitg',
+            dst_subdir='work',
+            ignore=set(('artifacts-film', )),
+        )
 
 
-jobs.sort(key=lambda j: j.sort_key)
 
-assert len(set(j.volname for j in jobs)) == 1
+    if args.set == 'artifacts':
+
+        make_link_jobs('out', 'tank/sitg/artifacts',
+            dst_subdir='trailer',
+        )
+
+        make_zfs_jobs('tank/heap/sitg/work', 'tank/sitg/artifacts',
+            src_subdir='artifacts-film',
+            ignore=set(('trailer', )),
+        )
 
 
-snaps = get_snapshots(jobs[0].volname)
+    if args.set == 'cache':
 
-cmd = ['zfs', 'rollback', snaps[-1].fullname]
-print(' '.join(cmd))
-if not args.dry_run:
-    subprocess.check_call(cmd)
+        # Seed the caches. We only have the one set from the trailer.
+        jobs.append(SyncJob(
+            'tank/sitg/cache',
+            '2015-08-02T00.sitg',
+            target='/mnt/tank/sitg/cache/TE',
+            a='/mnt/tank/sitg/cache/TE',
+            b='/mnt/tank/heap/sitg/cache',
+        ))
+
+        # The work caches.
+        make_zfs_jobs('tank/heap/sitg/work', 'tank/sitg/cache',
+            src_subdir='cache-film',
+            ignore=set(('TE', )),
+        )
 
 
-for job in jobs:
+    jobs.sort(key=lambda j: j.sort_key)
 
-    if any(s.name == job.snapname for s in snaps):
-        continue
+    assert len(set(j.volname for j in jobs)) == 1
 
-    print(job)
-    job.run()
 
-    cmd = ['zfs', 'snapshot', f'{job.volname}@{job.snapname}']
+    snaps = get_snapshots(jobs[0].volname)
+
+    cmd = ['zfs', 'rollback', snaps[-1].fullname]
     print(' '.join(cmd))
     if not args.dry_run:
         subprocess.check_call(cmd)
 
-    break
+
+    for job in jobs:
+
+        if any(s.name == job.snapname for s in snaps):
+            continue
+
+        print(job)
+        job.run()
+
+        cmd = ['zfs', 'snapshot', f'{job.volname}@{job.snapname}']
+        print(' '.join(cmd))
+        if not args.dry_run:
+            subprocess.check_call(cmd)
+
+        break
 
 
