@@ -18,8 +18,6 @@ class Node(BaseNode):
 
 def walk(root, ignore=None, rel_root=None, root_dev=None, _depth=0):
 
-    if root_dev is None:
-        root_dev = os.stat(root).st_dev
     if rel_root is None:
         rel_root = root
     
@@ -31,8 +29,11 @@ def walk(root, ignore=None, rel_root=None, root_dev=None, _depth=0):
         if names:
             break
 
-    if not _depth and not names:
-        raise ValueError("No names at _depth 0?!")
+    # We wait until after resolving names so that our stat isn't
+    # empty or some other bullshit due to ZFS not giving us data
+    # until we list the directory.
+    if root_dev is None:
+        root_dev = os.stat(root).st_dev
 
     for name in sorted(names):
 
@@ -41,6 +42,9 @@ def walk(root, ignore=None, rel_root=None, root_dev=None, _depth=0):
 
         path = os.path.join(root, name)
         st = os.lstat(path)
+
+        if not _depth:
+            print(path, st)
 
         if st.st_dev != root_dev:
             continue
