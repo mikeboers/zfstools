@@ -115,11 +115,14 @@ class SyncJob(Job):
         # - create new dirs
         # - create new files and update existing
         # - remove old dirs/files
+        # - set mtime on dirs
 
         # Create new directories.
+        # Their mtimes will be set wrong if there are any contents added, so
+        # we will defer that to later.
         for node in b_by_rel.values():
             if node.is_dir:
-                self.create_new(node)
+                self.create_new(node, utime=False)
 
         work = []
 
@@ -144,6 +147,16 @@ class SyncJob(Job):
                 self._proc.rmdir(tpath)
             else:
                 self._proc.unlink(tpath)
+
+        # Finally we set the mtimes of all directories.
+        # It might be marginally more efficient to track the changes we've
+        # made and not hit the filesystem for it. Oh well.
+        for b in bidx.nodes:
+            if b.is_dir:
+                tpath = os.path.join(self.target, b.relpath)
+                st = os.stat(tpath)
+                if (st.st_atime != b.stat.st_atime) or (st.st_mtime != b.stat.st_mtime):
+                    proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
 
     def update_pair(self, a, b):
 
@@ -190,7 +203,7 @@ class SyncJob(Job):
         # Times will almost always need to be set at this point.
         proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=2)
 
-    def create_new(self, b):
+    def create_new(self, b, utime=True):
 
         proc = self._proc
 
