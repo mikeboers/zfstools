@@ -29,7 +29,7 @@ TYPE_REG = 'F' # Regular file
 DiffItem = collections.namedtuple('DiffItem', 'relpath time type op path new_relpath')
 
 def decode(x):
-    return re.sub(r'\\(\d{4})', lambda m: chr(int(m.group(1), 8)), x)
+    return re.sub(rb'\\(\d{4})', lambda m: bytes((int(m.group(1), 8), )), x).decode()
 
 
 def iter_diff(volname, snap1, snap2, cache_key=None):
@@ -38,7 +38,7 @@ def iter_diff(volname, snap1, snap2, cache_key=None):
 
     for line in _iter_diff(volname, snap1, snap2, cache_key):
 
-        parts = line.rstrip().split('\t')
+        parts = line.rstrip().split(b'\t')
         time = float(parts[0])
         op = parts[1]
         type_ = parts[2]
@@ -63,17 +63,16 @@ def _iter_diff(volname, snap1, snap2, cache_key):
 
     if os.path.exists(cache_path):
         click.echo(f"Loading ZFS diff from cache: {cache_path}")
-        with open(cache_path, 'r') as fh:
+        with open(cache_path, 'rb') as fh:
             yield from fh
         return
 
     tmp_path = f'{cache_path}.{random.random()}'
-    with open(tmp_path, 'w') as fh:
+    with open(tmp_path, 'wb') as fh:
         cmd = ['zfs', 'diff', '-tFH', f'{volname}@{snap1}', f'{volname}@{snap2}']
         click.secho(f"Pulling ZFS diff for first time\n    {' '.join(cmd)}", fg='yellow')
         proc = subprocess.Popen(cmd, bufsize=1, stdout=subprocess.PIPE)
         for line in proc.stdout:
-            line = line.decode()
             fh.write(line)
             yield line
 
