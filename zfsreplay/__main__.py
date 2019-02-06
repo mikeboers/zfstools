@@ -164,21 +164,16 @@ class SyncJob(Job):
                 if not anodes:
                     continue
 
-                # We have them by inodes, so we don't need to look at them by path.
-                for n in anodes:
-                    a_by_rel.pop(n.relpath)
-                for n in bnodes:
-                    b_by_rel.pop(n.relpath)
-
                 if len(anodes) > 1 or len(bnodes) > 1:
                     click.secho("WARNING: There are hardlinks.", fg='yellow')
                     click.secho('\n'.join(map(str, anodes)), fg='yellow')
                     click.secho('\n'.join(map(str, bnodes)), fg='yellow')
 
-                # If we have multiple, treat them all as a[0] to all bs. This will
-                # work out fine. Promise.
-                #for n in bnodes:
-                #    pairs.append((anodes[0], n))
+                # Below here we don't deal with hardlinks at all.
+
+                # We have them by inodes, so we don't need to look at them by path.
+                a_by_rel.pop(anodes[0].relpath)
+                b_by_rel.pop(bnodes[0].relpath)
 
                 pairs.append((anodes[0], bnodes[0]))
 
@@ -210,7 +205,7 @@ class SyncJob(Job):
         # out of the way of other files or directories that might go in their
         # place. It is a bit of overhead to do it for all of them, but whatever.
         for a, b in pairs:
-            if a.is_file and a.relpath != b.relpath:
+            if (not a.is_dir) and a.relpath != b.relpath:
                 count = self._prename_count
                 self._prename_count = count + 1
                 group, node = divmod(count, 256)
@@ -275,9 +270,15 @@ class SyncJob(Job):
         bpath = b.path
         tpath = os.path.join(self.target, b.relpath)
 
-        # Move everything into the target namespace first.
-        # They've already been moved.
-        if a.is_file and a.relpath != b.relpath:
+        # Move everything into the target namespace first, as everything after
+        # here will deal with the bpath's.
+        if a.relpath != b.relpath:
+            
+            # This should only be files and links, since directories would not
+            # be in here with changed paths. We check anyways.
+            if a.is_dir:
+                raise ValueError(f"Directory appears to move: {a.relpath} to {b.relpath}")
+
             proc.rename(b.prename_path, tpath, original=a.relpath)
 
         # If this is not ZFS, hardlinks can't have different (meta)data.
