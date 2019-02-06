@@ -294,8 +294,8 @@ class SyncJob(Job):
             # then the file did not change.
             nochange = False
             if self.is_zfs and b.stat.st_size > (1024 * 1024 * 50):
-                ablock = zdb.get_block(self.asnap.fullname, a.stat.st_ino)
-                bblock = zdb.get_block(self.bsnap.fullname, b.stat.st_ino)
+                ablock = zdb.get_block(self.snapa.fullname, a.stat.st_ino)
+                bblock = zdb.get_block(self.snapb.fullname, b.stat.st_ino)
                 if ablock and ablock == bblock:
                     nochange = True
                     if proc.verbose:
