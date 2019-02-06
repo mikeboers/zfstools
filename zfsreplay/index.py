@@ -72,7 +72,7 @@ class Index(object):
         except KeyError:
             pass
 
-        print(f'Indexing {root} ignoring {ignore or None}')
+        print(f'Indexing {root}\n    ignoring {ignore or None}')
 
         self = cls(root, ignore)
         self.go()

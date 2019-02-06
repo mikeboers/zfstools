@@ -53,7 +53,7 @@ class Processor(object):
     def chmod(self, path, mode, verbosity=1):
         perms = stat.S_IMODE(mode)
         if self.verbose >= verbosity:
-            print(field('chmod'), stat.filemode(mode), path)
+            print(field('chmod'), f'{path}\t{stat.filemode(mode)}')
         if not self.dry_run:
             os.chmod(path, perms) #, follow_symlinks=False)
 

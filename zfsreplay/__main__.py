@@ -50,17 +50,23 @@ class Job(object):
         self.target = target or os.path.join('/mnt', volname)
         self.sort_key = sort_key or snapname
 
+    @property
+    def fullname(self):
+        return f'{self.volname}@{self.snapname}'
+
 
 class SyncJob(Job):
 
     def __init__(self, volname, snapname, a, b, target=None, sort_key=None, ignore=None,
-        is_zfs=False, snapa=None, snapb=None, src_subdir=None):
+        is_zfs=False, is_link=False, snapa=None, snapb=None, src_subdir=None):
         super().__init__(volname, snapname, target, sort_key)
         self.a = a
         self.b = b
         self.ignore = ignore
 
         self.is_zfs = is_zfs
+        self.is_link = is_link
+
         self.snapa = snapa
         self.snapb = snapb
         self.src_subdir = src_subdir
@@ -105,56 +111,63 @@ class SyncJob(Job):
         # have move detection so... it is only the moves that were done by hand
         # to avoid rsync copying everything.
 
-        if proc.verbose:
-            print("Scanning for inode sets")
+        if self.is_link or self.is_zfs:
 
-        for inode, bnodes in bidx.by_ino.items():
+            if proc.verbose:
+                print("Scanning for inode sets")
 
-            # We only deal with files/links like this.
-            if bnodes[0].is_dir:
-                continue
+            for inode, bnodes in bidx.by_ino.items():
 
-            anodes = aidx.by_ino.get(inode, ())
-            if not anodes:
-                continue
-
-            if self.is_zfs:
-
-                agen = zdb.get_gen(self.snapa.fullname, anodes[0].ino)
-                bgen = zdb.get_gen(self.snapb.fullname, bnodes[0].ino)
-
-                if not (agen and bgen):
-                    # This is disconcerting.
-                    click.secho(
-                        f"WARNING: Could not get generation for both nodes:\n"
-                        f"    {self.snapa.fullname} {anodes[0].ino} {anodes[0].path} -> {agen}\n"
-                        f"    {self.snapb.fullname} {bnodes[0].ino} {bnodes[0].path} -> {bgen}"
-                    , fg='yellow')
+                # We only deal with files/links like this.
+                if bnodes[0].is_dir:
                     continue
 
-                if agen != bgen:
-                    # These are not actually the same inode.
+                anodes = aidx.by_ino.get(inode, ())
+                if not anodes:
                     continue
 
-            if len(anodes) > 1 or len(bnodes) > 1:
-                click.secho("WARNING: There are hardlinks:", fg='yellow')
-                for set_ in (anodes, bnodes):
-                    for node in set_:
-                        click.secho(f'    {node.path}', fg='yellow')
+                if self.is_zfs:
 
-            # Below here we don't deal with hardlinks at all.
-            # The author's dataset doesn't have any significant ones. Oops.
+                    agen = zdb.get_gen(self.snapa.fullname, anodes[0].ino)
+                    bgen = zdb.get_gen(self.snapb.fullname, bnodes[0].ino)
 
-            # We have them by inodes, so we don't need to look at them by path.
-            a_by_rel.pop(anodes[0].relpath)
-            b_by_rel.pop(bnodes[0].relpath)
+                    if not (agen and bgen):
+                        # This is disconcerting.
+                        click.secho(
+                            f"WARNING: Could not get generation for both nodes:\n"
+                            f"    {self.snapa.fullname} {anodes[0].ino} {anodes[0].path} -> {agen}\n"
+                            f"    {self.snapb.fullname} {bnodes[0].ino} {bnodes[0].path} -> {bgen}"
+                        , fg='yellow')
+                        continue
 
-            # Again... don't treat them as hardlinks.
-            pairs.append((anodes[0], bnodes[0]))
+                    if agen != bgen:
+                        # These are not actually the same inode.
+                        continue
+
+                if len(anodes) > 1 or len(bnodes) > 1:
+                    click.secho("WARNING: There are hardlinks:", fg='yellow')
+                    for set_ in (anodes, bnodes):
+                        for node in set_:
+                            click.secho(f'    {node.path}', fg='yellow')
+
+                # Below here we don't deal with hardlinks at all.
+                # The author's dataset doesn't have any significant ones. Oops.
+
+                # We have them by inodes, so we don't need to look at them by path.
+                a_by_rel.pop(anodes[0].relpath)
+                b_by_rel.pop(bnodes[0].relpath)
+
+                # Again... don't treat them as hardlinks.
+                pairs.append((anodes[0], bnodes[0]))
+
+            if proc.verbose:
+                num_inode_pairs = len(pairs)
+                print(f"    {num_inode_pairs} pairs from {len(aidx.by_ino)}/{len(bidx.by_ino)} inodes")
+            
+        else:
+            num_inode_pairs = 0
 
         if proc.verbose:
-            num_inode_pairs = len(pairs)
-            print(f"    {num_inode_pairs} pairs from {len(aidx.by_ino)}/{len(bidx.by_ino)} inodes")
             print("Scanning for relpath pairs")
 
         # Collect pairs by relpath.
@@ -344,7 +357,7 @@ jobs = []
 
 
 
-def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip_start=False, is_zfs=False):
+def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip_start=False, is_zfs=False, is_link=False):
 
     target = os.path.normpath(os.path.join('/mnt', dst_volume, dst_subdir))
 
@@ -370,6 +383,7 @@ def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip
             b=os.path.normpath(os.path.join(b.root, src_subdir)),
             target=target,
             ignore=ignore,
+            is_link=is_link,
             is_zfs=is_zfs,
             snapa=a,
             snapb=b,
@@ -402,16 +416,15 @@ def make_timestamped_jobs(src_name, *args, **kwargs):
         except ValueError:
             creation = dt.datetime.strptime(name, '%Y-%m-%d')
 
-
         snaps.append(Snapshot(
             f'backups/{src_name}@{name}',
-            'bak',
+            'bak', # This is where it makes the name from. # This is hacky.
             name,
             creation,
             os.path.join(root, name),
         ))
 
-    make_jobs(snaps, *args, **kwargs)
+    make_jobs(snaps, *args, **kwargs, is_link=True)
 
 
 def main():
@@ -497,9 +510,9 @@ def do_set(args, set_):
     assert len(set(j.volname for j in jobs)) == 1
 
 
-    snaps = get_zfs_snapshots(jobs[0].volname)
+    existing_snapshots = get_zfs_snapshots(jobs[0].volname)
 
-    cmd = ['zfs', 'rollback', snaps[-1].fullname]
+    cmd = ['zfs', 'rollback', existing_snapshots[-1].fullname]
     if args.verbose > 1:
         print(' '.join(cmd))
     if not args.dry_run:
@@ -514,7 +527,7 @@ def do_set(args, set_):
 
     for job in jobs:
 
-        click.secho(f'==> {job.__class__.__name__} {job.volname}@{job.snapname}', fg='blue')
+        click.secho(f'==> {job.__class__.__name__} {job.fullname}', fg='blue')
         click.echo(f'target: {job.target}')
         click.echo(f'src a:  {job.a}')
         click.echo(f'src b:  {job.b}')
@@ -523,25 +536,31 @@ def do_set(args, set_):
         if job.is_zfs:
             click.echo(f'is_zfs: true')
 
-        existing = next((s for s in snaps if s.name == job.snapname), None)
+        existing = next((s for s in existing_snapshots if s.name == job.snapname), None)
         if existing:
             click.secho(f'Already done at {existing.creation.isoformat("T")}', fg='green')
             continue
 
         if args.dry_run < 2:
             click.echo('---')
+            start_time = dt.datetime.utcnow()
             try:
                 job.run(processor, threads=args.threads)
             except Exception as e:
                 click.secho(f'{e.__class__.__name__}: {e}', fg='red')
                 pdb.post_mortem()
                 raise # Don't let us keep going.
+            end_time = dt.datetime.utcnow()
 
-        cmd = ['zfs', 'snapshot', f'{job.volname}@{job.snapname}']
+        cmd = ['zfs', 'snapshot', job.fullname]
         if args.verbose > 1:
             print(' '.join(cmd))
         if not args.dry_run:
             subprocess.check_call(cmd)
+            # subprocess.check_call(['zfs', 'set', f'replay:source={job.source}', job.fullname])
+            # subprocess.check_call(['zfs', 'set', f'replay:creation={job.creation.isoformat("T")}', job.fullname])
+            # subprocess.check_call(['zfs', 'set', f'replay:start={start_time.isoformat("T")}', job.fullname])
+            # subprocess.check_call(['zfs', 'set', f'replay:end={end_time.isoformat("T")}', job.fullname])
 
         done += 1
         if args.count and not args.dry_run and args.count >= done:
