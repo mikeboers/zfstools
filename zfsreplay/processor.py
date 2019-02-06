@@ -51,11 +51,11 @@ class Processor(object):
             os.symlink(source, link_name)
 
     def chmod(self, path, mode, verbosity=1):
-        mode = stat.S_IMODE(mode)
+        perms = stat.S_IMODE(mode)
         if self.verbose >= verbosity:
             print(field('chmod'), stat.filemode(mode), path)
         if not self.dry_run:
-            os.chmod(path, mode) #, follow_symlinks=False)
+            os.chmod(path, perms) #, follow_symlinks=False)
 
     def chown(self, path, uid, gid, verbosity=1):
         if self.verbose >= verbosity:
