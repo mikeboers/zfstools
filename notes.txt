@@ -10,8 +10,15 @@ root@hopper:/home/mikeboers/dev/zfsreplay# ll /lib/modules/4.15.0-45-generic/bui
 ---
 
 WARNING: Inodes match despite file type
+
 Node(name='screenshots', path='/mnt/tank/heap/sitg/.zfs/snapshot/trailer/scratch/2016-01-19-screenshot/screenshots', relpath='scratch/2016-01-19-screenshot/screenshots', fmt=16384, is_dir=True, is_file=False, is_link=False, stat=os.stat_result(st_mode=16877, st_ino=356471, st_dev=99, st_nlink=2, st_uid=501, st_gid=99, st_size=31, st_atime=1479040994, st_mtime=1449596421, st_ctime=1478962204))
+
 Node(name='._.DS_Store', path='/mnt/tank/heap/sitg/.zfs/snapshot/2018-08-01T02:00:01-04:00/scratch/2017/2017-05-12/._.DS_Store', relpath='scratch/2017/2017-05-12/._.DS_Store', fmt=32768, is_dir=False, is_file=True, is_link=False, stat=os.stat_result(st_mode=33188, st_ino=356471, st_dev=100, st_nlink=1, st_uid=501, st_gid=20, st_size=4096, st_atime=1495117094, st_mtime=1495031383, st_ctime=1495031383))
+
+
+zdb -d tank/heap/sitg@trailer 356471
+zdb -d tank/heap/sitg@2018-08-01T02:00:01-04:00 356471
+
 
 WARNING: Inodes match despite file type
 Node(name='it', path='/mnt/tank/heap/sitg/.zfs/snapshot/trailer/scratch/2016-02-27/it', relpath='scratch/2016-02-27/it', fmt=16384, is_dir=True, is_file=False, is_link=False, stat=os.stat_result(st_mode=16893, st_ino=356528, st_dev=99, st_nlink=2, st_uid=501, st_gid=99, st_size=73, st_atime=1479040994, st_mtime=1456681625, st_ctime=1478962204))

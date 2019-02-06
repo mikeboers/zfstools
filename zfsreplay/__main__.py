@@ -91,8 +91,8 @@ class SyncJob(Job):
         # - Same indirect block from/to zfs snapshot means the file has not changed.
         
         # In the future we should change this from pairs of files to sets of
-        # hardlinks. I don't think I really have a significant quantity of those,
-        # but it would be good to handle them all properly.
+        # hardlinks. My two volumes don't currently have ANY hardlinks in them
+        # so I'm just going to ignore that for now.
 
         a_by_rel = aidx.by_rel.copy()
         b_by_rel = bidx.by_rel.copy()
@@ -102,7 +102,6 @@ class SyncJob(Job):
 
             # We can't use inodes with 100% accuracy, because they get recycled.
             # We do have the ability to `zfs diff` for accurate moves though.
-            # So lets do that!
 
             cache_key_content = f'{self.snapa.fullname},{self.snapa.creation},{self.snapb.fullname},{self.snapb.creation}'
             cache_key = hashlib.md5(cache_key_content.encode()).hexdigest()[:8]
@@ -127,9 +126,12 @@ class SyncJob(Job):
 
         else:
 
-            for inode, bnodes in bidx.by_ino.items():
+            # For linked snapshots we can directly see when files have been
+            # moved or changed. Unfortunately, these were likely made by rsync
+            # which did not originally have move detection so... it is only
+            # the moves that were done by hand to avoid rsync copying everything.
 
-                # For linked snapshots we can directly see when files have not been changed.
+            for inode, bnodes in bidx.by_ino.items():
 
                 # We only deal with files like this.
                 if not bnodes[0].is_file:
@@ -160,7 +162,8 @@ class SyncJob(Job):
             # Only counts as a pair if they are the same type.
             if a is None or a.fmt != b.fmt:
                 continue
-            
+
+            # Remove them from tracking.
             del a_by_rel[relpath]
             del b_by_rel[relpath]
 
@@ -175,7 +178,7 @@ class SyncJob(Job):
         # - set mtime on dirs
 
 
-        # Pre-move moving files.
+        # Pre-move moving files/links.
         # This gets them out of directories that are going to be removed, and
         # out of the way of other files or directories that might go in their
         # place. It is a bit of overhead to do it for all of them, but whatever.
@@ -209,12 +212,12 @@ class SyncJob(Job):
 
         work = []
 
-        # Update files which exist in both.
+        # Update files/links which exist in both.
         # This will be the secondary moves.
         work.extend((self.update_pair, (a, b)) for a, b in pairs)
 
-        # Create new dirs/files that are in B but not A.
-        work.extend((self.create_new, (node, )) for node in b_by_rel.values() if not node.is_dir)
+        # Create new files/links that are in B but not A.
+        work.extend((self.create_new, (b, )) for b in b_by_rel.values() if not b.is_dir)
 
         # For aesthetics, we do them in order.
         work.sort(key=lambda x: x[1][-1].path)

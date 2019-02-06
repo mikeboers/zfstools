@@ -96,3 +96,22 @@ class Index(object):
             self.nodes.append(node)
             self.by_ino.setdefault(node.stat.st_ino, []).append(node)
             self.by_rel[node.relpath] = node
+
+
+if __name__ == '__main__':
+
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--ignore', action='append')
+    parser.add_argument('roots', nargs='+')
+    args = parser.parse_args()
+
+    for root in args.roots:
+
+        print(root)
+        idx = Index.get(root, ignore=args.ignore)
+
+        n_ino = len(idx.by_ino)
+        n_rel = len(idx.by_rel)
+        print(f'{n_ino - n_rel} links; {n_ino} inodes in {n_rel} paths')
