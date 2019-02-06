@@ -98,76 +98,56 @@ class SyncJob(Job):
         b_by_rel = bidx.by_rel.copy()
         pairs = []
 
-        if self.is_zfs:
+        # Match up inode pairs as these will give us moves.
+        # For ZFS we need to check the generation as well.
+        # For linked snapshots we can directly see when files have been changed.
+        # Unfortunately, these were likely made by rsync which did not originally
+        # have move detection so... it is only the moves that were done by hand
+        # to avoid rsync copying everything.
 
-            # We can't use inodes with 100% accuracy, because they get recycled.
-            # We do have the ability to `zfs diff` for accurate moves though.
+        for inode, bnodes in bidx.by_ino.items():
 
-            cache_key_content = f'{self.snapa.fullname},{self.snapa.creation},{self.snapb.fullname},{self.snapb.creation}'
-            cache_key = hashlib.md5(cache_key_content.encode()).hexdigest()[:8]
+            # We only deal with files/links like this.
+            if bnodes[0].is_dir:
+                continue
 
-            prefix = self.src_subdir + '/' if self.src_subdir else None
+            anodes = aidx.by_ino.get(inode, ())
+            if not anodes:
+                continue
 
-            for e in diff.iter_diff(self.snapa.volname, self.snapa.name, self.snapb.name, cache_key=cache_key):
+            if self.is_zfs:
 
-                if e.op != 'R':
-                    continue
-                if e.type not in ('F', '@'): # We can do links too.
-                    continue
+                agen = zdb.get_gen(self.snapa.fullname, anodes[0].ino)
+                bgen = zdb.get_gen(self.snapb.fullname, bnodes[0].ino)
 
-                arelpath = e.relpath
-                brelpath = e.new_relpath
-
-                # If we have a src_subdir, restrict to that, and make the
-                # relpaths relative to that.
-                if prefix:
-                    if not arelpath.startswith(prefix):
-                        continue
-                    arelpath = arelpath[len(prefix):]
-                    brelpath = brelpath[len(prefix):]
-
-                try:
-                    a = a_by_rel.pop(arelpath)
-                except KeyError:
-                    ahead = arelpath.split('/', 1)[0]
-                    bhead = brelpath.split('/', 1)[0]
-                    if ahead not in self.ignore or bhead not in self.ignore:
-                        raise
-                    continue
-                else:
-                    b = b_by_rel.pop(brelpath)
-
-                pairs.append((a, b))
-
-        else:
-
-            # For linked snapshots we can directly see when files have been
-            # moved or changed. Unfortunately, these were likely made by rsync
-            # which did not originally have move detection so... it is only
-            # the moves that were done by hand to avoid rsync copying everything.
-
-            for inode, bnodes in bidx.by_ino.items():
-
-                # We only deal with files like this.
-                if not bnodes[0].is_file:
+                if not (agen and bgen):
+                    # This is disconcerting.
+                    click.secho(
+                        f"WARNING: Could not get generation for both nodes:\n"
+                        f"    {self.snapa.fullname} {anodes[0].ino} {anodes[0].path} -> {agen}\n"
+                        f"    {self.snapb.fullname} {bnodes[0].ino} {bnodes[0].path} -> {bgen}"
+                    , fg='yellow')
                     continue
 
-                anodes = aidx.by_ino.get(inode, ())
-                if not anodes:
+                if agen != bgen:
+                    # These are not actually the same inode.
                     continue
 
-                if len(anodes) > 1 or len(bnodes) > 1:
-                    click.secho("WARNING: There are hardlinks.", fg='yellow')
-                    click.secho('\n'.join(map(str, anodes)), fg='yellow')
-                    click.secho('\n'.join(map(str, bnodes)), fg='yellow')
+            if len(anodes) > 1 or len(bnodes) > 1:
+                click.secho("WARNING: There are hardlinks:", fg='yellow')
+                for set_ in (anodes, bnodes):
+                    for node in set_:
+                        click.secho(f'    {node.path}', fg='yellow')
 
-                # Below here we don't deal with hardlinks at all.
+            # Below here we don't deal with hardlinks at all.
+            # The author's dataset doesn't have any significant ones. Oops.
 
-                # We have them by inodes, so we don't need to look at them by path.
-                a_by_rel.pop(anodes[0].relpath)
-                b_by_rel.pop(bnodes[0].relpath)
+            # We have them by inodes, so we don't need to look at them by path.
+            a_by_rel.pop(anodes[0].relpath)
+            b_by_rel.pop(bnodes[0].relpath)
 
-                pairs.append((anodes[0], bnodes[0]))
+            # Again... don't treat them as hardlinks.
+            pairs.append((anodes[0], bnodes[0]))
 
         # Collect pairs by relpath.
         for relpath, b in list(b_by_rel.items()):
@@ -275,7 +255,7 @@ class SyncJob(Job):
             proc.rename(b.prename_path, tpath, original=a.relpath)
 
         # If this is not ZFS, hardlinks can't have different (meta)data.
-        if (not self.is_zfs) and a.stat.st_ino == b.stat.st_ino:
+        if (not self.is_zfs) and a.ino == b.ino:
             return
 
         # If this is ZFS, files with same ctime can't have been modified.
@@ -302,8 +282,8 @@ class SyncJob(Job):
             # then the file did not change.
             nochange = False
             if self.is_zfs and b.stat.st_size > (1024 * 1024 * 50):
-                ablock = zdb.get_block(self.snapa.fullname, a.stat.st_ino)
-                bblock = zdb.get_block(self.snapb.fullname, b.stat.st_ino)
+                ablock = zdb.get_block(self.snapa.fullname, a.ino)
+                bblock = zdb.get_block(self.snapb.fullname, b.ino)
                 if ablock and ablock == bblock:
                     nochange = True
                     if proc.verbose:

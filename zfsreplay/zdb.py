@@ -29,38 +29,49 @@ def get_block(dataset, obj):
     return ret
 
 
-_gen_procs = {}
+
+_gen_proc = None
+
+
+class ZDBError(EnvironmentError):
+    pass
 
 def get_gen(dataset, obj):
 
-    try:
-        proc = _gen_procs[dataset]
+    global _gen_proc
 
-    except KeyError:
+    if _gen_proc is None:
 
-        # This isn't the most efficient thing, but... eh.
-        if len(_gen_procs) == 2:
-            _gen_procs.clear()
-
-        proc = subprocess.Popen([os.path.abspath(os.path.join(__file__, '..', 'zgen')), dataset],
-            bufsize=0,
+        _gen_proc = subprocess.Popen([os.path.abspath(os.path.join(__file__, '..', 'zgen'))],
+            bufsize=1,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            #universal_newlines=True,
         )
-        _gen_procs[dataset] = proc
 
-    proc.stdin.write(f'{obj:d}\n'.encode())
+    # print('<<<', dataset, obj)
+    _gen_proc.stdin.write(f'{dataset} {obj:d}\n'.encode())
+    _gen_proc.stdin.flush()
+    raw = _gen_proc.stdout.readline().decode().rstrip()
+    # print(">>>", repr(raw))
 
-    raw = proc.stdout.readline().decode().rstrip()
     res = raw.split()
 
-    if len(res) != 2:
-        raise ValueError(f"zgen error: {raw}")
+    if res[2] == 'ERROR':
+        errno = int(res[3])
+        error = ' '.join(res[4:])
+        if errno == 2:
+            return
+        raise ZDBError(errno, error)
 
-    ino = int(res[0])
-    gen = int(res[1])
+    if len(res) != 3:
+        raise ValueError(f"zgen output malformed: {raw}")
 
-    if ino != obj:
+    dsn = res[0]
+    ino = int(res[1])
+    gen = int(res[2])
+
+    if dsn != dataset or ino != obj:
         raise ValueError(f"zgen desync for {obj}: {raw}")
 
     return gen

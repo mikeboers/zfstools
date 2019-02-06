@@ -6,7 +6,7 @@ import time
 from .utils import cached_property
 
 
-BaseNode = collections.namedtuple('BaseNode', 'name path relpath fmt is_dir is_file is_link stat')
+BaseNode = collections.namedtuple('BaseNode', 'name path relpath ino fmt is_dir is_file is_link stat')
 
 class Node(BaseNode):
 
@@ -21,13 +21,11 @@ def walk(root, ignore=None, rel_root=None, root_dev=None, _depth=0):
     if rel_root is None:
         rel_root = root
     
-    tries = 1 if _depth else 4
-    for i in range(tries):
-        if i:
-            time.sleep(2 ** (i - 1)) # 1, 2, 4
-        names = os.listdir(root)
-        if names:
-            break
+    # Prime it for ZFS.
+    if not _depth:
+        os.listdir(root)
+
+    names = os.listdir(root)
 
     # We wait until after resolving names so that our stat isn't
     # empty or some other bullshit due to ZFS not giving us data
@@ -53,7 +51,7 @@ def walk(root, ignore=None, rel_root=None, root_dev=None, _depth=0):
         if not (is_dir or is_file or is_link):
             continue
 
-        yield Node(name, path, os.path.relpath(path, rel_root), fmt, is_dir, is_file, is_link, st)
+        yield Node(name, path, os.path.relpath(path, rel_root), st.st_ino, fmt, is_dir, is_file, is_link, st)
 
         if is_dir:
             yield from walk(path, rel_root=rel_root, root_dev=root_dev, _depth=_depth+1)
@@ -94,7 +92,7 @@ class Index(object):
     def go(self):
         for node in walk(self.root, ignore=self.ignore):
             self.nodes.append(node)
-            self.by_ino.setdefault(node.stat.st_ino, []).append(node)
+            self.by_ino.setdefault(node.ino, []).append(node)
             self.by_rel[node.relpath] = node
 
 

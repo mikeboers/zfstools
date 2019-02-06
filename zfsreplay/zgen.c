@@ -132,67 +132,44 @@ typedef struct zfs_cmd {
 
 #define ZFS_IOC_OBJ_TO_STATS 0x5a38
 
+
 int main(int argc, char** argv) {
         
-
-    int error = 0;
-
-    if (argc < 2) {
-        printf("usage: %s SNAPSHOT [INODE+]\n", argv[0]);
-        return 1;
-    }
-
-
-    zfs_cmd_t zc = {"\0"};
-
-    // char *dataset_name = "tank/heap/sitg@trailer";
-    // char *dataset_name = "tank/test/src@v2";
-    strncpy(zc.zc_name, argv[1], sizeof (zc.zc_name));
-
+    int res = 0;
+    char dataset[256];
 
     int fd = open("/dev/zfs", O_RDONLY);
     if (!fd) {
-        printf("error opening /dev/zfs\n");
+        printf("[zgen] ERROR opening /dev/zfs\n");
         return 1;
     }
 
-    int argc_left = argc - 2;
+    zfs_cmd_t zc = {"\0"};
 
     while (1) {
 
-        if (argc_left) {
-            zc.zc_obj = atoi(argv[argc - argc_left]);
+        zc.zc_obj = 0;
+        res = scanf("%s %lu", dataset, &zc.zc_obj);
+        if (!zc.zc_obj) {
+            fprintf(stdout, "[zgen] ERROR while reading\n");
+            // fprintf(stderr, "[zgen] ERROR while reading\n");
+            return 2;
+        }
+        strncpy(zc.zc_name, dataset, sizeof (zc.zc_name));
+
+        fprintf(stdout, "%s %lu ", dataset, zc.zc_obj);
+        // fprintf(stderr, "%s %lu ", dataset, zc.zc_obj);
+
+        res = ioctl(fd, ZFS_IOC_OBJ_TO_STATS, &zc);
+        if (res < 0) {
+            fprintf(stdout, "ERROR %d %s\n", errno, strerror(errno));
+            // fprintf(stderr, "ERROR %d %s\n", errno, strerror(errno));
         } else {
-            zc.zc_obj = 0;
-            scanf("%lu", &zc.zc_obj);
-            if (!zc.zc_obj) {
-                return 0;
-            }
+            fprintf(stdout, "%lu\n", zc.zc_stat.zs_gen);
+            // fprintf(stderr, "%lu\n", zc.zc_stat.zs_gen);
         }
 
-        printf("%lu ", zc.zc_obj);
-
-        error = ioctl(fd, ZFS_IOC_OBJ_TO_STATS, &zc);
-
-        if (error) {
-            printf("ERROR ioctl=%d errno=%d: %s\n", error, errno, strerror(errno));
-            continue;
-        }
-
-        printf("%lu\n",
-            zc.zc_stat.zs_gen
-            // zc.zc_stat.zs_mode,
-            // zc.zc_stat.zs_links,
-            // zc.zc_stat.zs_ctime[0],
-            // zc.zc_stat.zs_ctime[1]
-        );
         fflush(stdout);
-
-        if (argc_left) {
-            if (!--argc_left) {
-                break;
-            }
-        }
 
     }
 
