@@ -1,8 +1,13 @@
 
 
 #include <fcntl.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+
+// #include <libzfs.h>
 
 
 typedef enum { 
@@ -124,8 +129,42 @@ typedef struct zfs_cmd {
 } zfs_cmd_t;
 
 
+#define ZFS_IOC_OBJ_TO_STATS 0x5a38
 
 int main(int argc, char** argv) {
-    
+        
+    if (argc < 3) {
+        printf("usage: %s SNAPSHOT INODE\n", argv[0]);
+        return 1;
+    }
+
+    zfs_cmd_t zc = {"\0"};
+
+    // char *dataset_name = "tank/heap/sitg@trailer";
+    // char *dataset_name = "tank/test/src@v2";
+    strncpy(zc.zc_name, argv[1], sizeof (zc.zc_name));
+
+    zc.zc_obj = atoi(argv[2]);
+
+    int fd = open("/dev/zfs", O_RDONLY);
+    if (!fd) {
+        printf("Error opening /dev/zfs\n");
+        return 1;
+    }
+
+    int error = 0;
+    error = ioctl(fd, ZFS_IOC_OBJ_TO_STATS, &zc);
+
+    if (error) {
+        printf("Error ioctl %d\n", error);
+        return error;
+    }
+
+    printf("gen:   %ld\n", zc.zc_stat.zs_gen);
+    printf("mode:  %ld\n", zc.zc_stat.zs_mode);
+    printf("links: %ld\n", zc.zc_stat.zs_links);
+    printf("ctime: %ld %ld\n", zc.zc_stat.zs_ctime[0], zc.zc_stat.zs_ctime[1]);
+
     return 0;
+
 }

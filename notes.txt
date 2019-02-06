@@ -19,6 +19,9 @@ Node(name='._.DS_Store', path='/mnt/tank/heap/sitg/.zfs/snapshot/2018-08-01T02:0
 zdb -d tank/heap/sitg@trailer 356471
 zdb -d tank/heap/sitg@2018-08-01T02:00:01-04:00 356471
 
+My tool can also isolate that they are different generations, which with inode
+is enough to call them the same file.
+
 
 WARNING: Inodes match despite file type
 Node(name='it', path='/mnt/tank/heap/sitg/.zfs/snapshot/trailer/scratch/2016-02-27/it', relpath='scratch/2016-02-27/it', fmt=16384, is_dir=True, is_file=False, is_link=False, stat=os.stat_result(st_mode=16893, st_ino=356528, st_dev=99, st_nlink=2, st_uid=501, st_gid=99, st_size=73, st_atime=1479040994, st_mtime=1456681625, st_ctime=1478962204))
