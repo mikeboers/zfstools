@@ -32,11 +32,11 @@ def decode(x):
     return re.sub(r'\\(\d{4})', lambda m: chr(int(m.group(1), 8)), x)
 
 
-def iter_diff(volname, snap1, snap2):
+def iter_diff(volname, snap1, snap2, cache_key=None):
 
     abs_prefix_len = len(volname) + 6 # /mnt/{volname}/xxx
 
-    for line in _iter_diff(volname, snap1, snap2):
+    for line in _iter_diff(volname, snap1, snap2, cache_key):
 
         parts = line.rstrip().split('\t')
         time = float(parts[0])
@@ -53,13 +53,13 @@ def iter_diff(volname, snap1, snap2):
         yield DiffItem(relpath, time, type_, op, path, new_relpath)
 
 
-def _iter_diff(volname, snap1, snap2):
+def _iter_diff(volname, snap1, snap2, cache_key):
 
     cache_dir = os.path.join(CACHE_ROOT, volname)
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
 
-    cache_path = os.path.join(cache_dir, f'{snap1},{snap2}.zfsdiff')
+    cache_path = os.path.join(cache_dir, f'{snap1},{snap2}{"," if cache_key else ""}{cache_key or ""}.zfsdiff')
 
     if os.path.exists(cache_path):
         click.echo(f"Loading ZFS diff from cache: {cache_path}")

@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+import hashlib
 
 import click
 
@@ -117,7 +118,7 @@ class SyncJob(Job):
         # In the future we should change this from pairs of files to sets of
         # hardlinks. I don't think I really have a significant quantity of those,
         # but it would be good to handle them all properly.
-        
+
         a_by_rel = aidx.by_rel.copy()
         b_by_rel = bidx.by_rel.copy()
         pairs = []
@@ -128,7 +129,10 @@ class SyncJob(Job):
             # We do have the ability to `zfs diff` for accurate moves though.
             # So lets do that!
 
-            for e in diff.iter_diff(self.snapa.volname, self.snapa.name, self.snapb.name):
+            cache_key_content = f'{self.snapa.fullname},{self.snapa.creation},{self.snapb.fullname},{self.snapb.creation}'
+            cache_key = hashlib.md5(cache_key_content.encode()).hexdigest()[:8]
+
+            for e in diff.iter_diff(self.snapa.volname, self.snapa.name, self.snapb.name, cache_key=cache_key):
 
                 if e.op != 'R':
                     continue
