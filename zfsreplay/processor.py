@@ -17,13 +17,13 @@ class Processor(object):
         
     def prename(self, src, dst):
         if self.verbose:
-            print(field('prename'), src, dst)
+            print(field('prename'), dst, src)
         if not self.dry_run:
             os.rename(src, dst)
 
     def rename(self, src, dst, original=None):
         if self.verbose:
-            print(field('rename'), src, dst, f'(from {original})' if original else '')
+            print(field('rename'), dst, src, f'(from {original})' if original else '')
         if not self.dry_run:
             os.rename(src, dst)
 
@@ -44,11 +44,11 @@ class Processor(object):
             print(field('mkdir'), path)
         if not self.dry_run:
             os.mkdir(path)
-    def symlink(self, dst, src):
+    def symlink(self, source, link_name):
         if self.verbose:
-            print(field('symlink'), dst, src)
+            print(field('symlink'), link_name, source)
         if not self.dry_run:
-            os.symlink(dst, src)
+            os.symlink(source, link_name)
 
     def chmod(self, path, mode, verbosity=1):
         mode = stat.S_IMODE(mode)
@@ -72,7 +72,7 @@ class Processor(object):
     def copy(self, src_path, dst_path):
 
         if self.verbose:
-            print(field('copy'), src_path, dst_path)
+            print(field('copy'), dst_path, src_path)
         if self.dry_run:
             return
 
@@ -96,7 +96,7 @@ class Processor(object):
     def merge(self, src_path, dst_path):
 
         if self.verbose:
-            print(field('merge'), src_path, dst_path)
+            print(field('merge'), dst_path, src_path)
         if self.dry_run:
             return
 
