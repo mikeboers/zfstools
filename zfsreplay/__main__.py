@@ -126,8 +126,16 @@ class SyncJob(Job):
                     arelpath = arelpath[len(prefix):]
                     brelpath = brelpath[len(prefix):]
 
-                a = a_by_rel.pop(arelpath)
-                b = b_by_rel.pop(brelpath)
+                try:
+                    a = a_by_rel.pop(arelpath)
+                except KeyError:
+                    ahead = arelpath.split('/', 1)[0]
+                    bhead = brelpath.split('/', 1)[0]
+                    if ahead not in self.ignore or bhead not in self.ignore:
+                        raise
+                    continue
+                else:
+                    b = b_by_rel.pop(brelpath)
 
                 pairs.append((a, b))
 
