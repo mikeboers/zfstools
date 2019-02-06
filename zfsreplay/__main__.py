@@ -109,24 +109,56 @@ class SyncJob(Job):
         b_by_rel = bidx.by_rel.copy()
         pairs = []
 
-        # Collect pairs by inode (if they are on the same device).
-        if aidx.nodes[0].stat.st_dev == bidx.nodes[0].stat.st_dev:
-            for inode, bnodes in bidx.by_ino.items():
+        # Collect pairs by inode.
+        # For linked snapshots we can directly see when files have not been changed.
+        # For ZFS snapshots, we get 99% information into if they have been moved.
+        for inode, bnodes in bidx.by_ino.items():
 
-                anodes = aidx.by_ino.get(inode, ())
-                if not anodes:
-                    continue
+            # We only deal with files like this.
+            if not bnodes[0].is_file:
+                continue
 
-                # We have them by inodes, so we don't need to look at them by path.
-                for n in anodes:
-                    a_by_rel.pop(n.relpath)
-                for n in bnodes:
-                    b_by_rel.pop(n.relpath)
+            anodes = aidx.by_ino.get(inode, ())
+            if not anodes:
+                continue
 
-                # If we have multiple, treat them all as a[0] to all bs. This will
-                # work out fine. Promise.
-                for n in bnodes:
-                    pairs.append((anodes[0], n))
+            # We need to be careful because inodes can be recycled between ZFS
+            # snapshots.
+
+            # We still aren't really sure what is going on.
+            # These two checks aren't quite perfect, but... eh.
+            if not anodes[0].is_file:
+                click.secho('WARNING: inode match despite file type', fg='yellow')
+                click.secho('\n'.join(map(str, anodes)), fg='yellow')
+                click.secho('\n'.join(map(str, bnodes)), fg='yellow')
+                continue
+
+            if (
+                anodes[0].stat.st_size != bnodes[0].stat.st_size and
+                os.path.basename(anodes[0].relpath) != os.path.basename(bnodes[0].relpath)
+            ):
+                click.secho('WARNING: inode appears recycled:', fg='yellow')
+                click.secho('\n'.join(map(str, anodes)), fg='yellow')
+                click.secho('\n'.join(map(str, bnodes)), fg='yellow')
+                continue
+
+            # We have them by inodes, so we don't need to look at them by path.
+            for n in anodes:
+                a_by_rel.pop(n.relpath)
+            for n in bnodes:
+                b_by_rel.pop(n.relpath)
+
+            if len(anodes) > 1 or len(bnodes) > 1:
+                click.secho("WARNING: There are hardlinks.", fg='yellow')
+                click.secho('\n'.join(map(str, anodes)), fg='yellow')
+                click.secho('\n'.join(map(str, bnodes)), fg='yellow')
+
+            # If we have multiple, treat them all as a[0] to all bs. This will
+            # work out fine. Promise.
+            #for n in bnodes:
+            #    pairs.append((anodes[0], n))
+
+            pairs.append((anodes[0], bnodes[0]))
 
         # Collect pairs by relpath.
         for relpath, b in list(b_by_rel.items()):
