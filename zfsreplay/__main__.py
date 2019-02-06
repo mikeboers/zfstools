@@ -17,6 +17,7 @@ import click
 from .index import Index
 from .processor import Processor
 from . import diff
+from . import zdb
 
 
 Snapshot = collections.namedtuple('Snapshot', ('fullname', 'volname', 'name', 'creation', 'root'))
@@ -38,33 +39,7 @@ def get_zfs_snapshots(volume):
 
     return snapshots
 
-def get_zfs_volume(path):
-    m = re.match(r'^/mnt/(.+?)/\.zfs', path)
-    if m:
-        return m.group(1)
 
-
-def get_zfs_block(volume, object):
-
-    ret = None
-
-    proc = subprocess.Popen(['zdb', '-ddddd', volume, str(object)], stdout=subprocess.PIPE)
-    for line in proc.stdout:
-
-        # Looks like:
-        #    0 L5      0:29ed4bcd7000:3000 20000L/1000P F=14 B=14229055/14229055
-        m = re.match(rb'\s*0\s+L\d\s+([0-9a-f]+:[0-9a-f]+:[0-9a-f]+)', line)
-        if not m:
-            continue
-        
-        ret = m.group(1)
-        proc.stdout.close()
-        break
-
-    proc.terminate()
-    proc.kill()
-
-    return ret
 
 
 class Job(object):
@@ -305,12 +280,12 @@ class SyncJob(Job):
         # Try to efficiently update them.
         else:
 
+            # Check what block they are stored in. If it did not change,
+            # then the file did not change.
             nochange = False
             if self.is_zfs and b.stat.st_size > (1024 * 1024 * 50):
-                avol = get_zfs_volume(a.path)
-                bvol = get_zfs_volume(b.path)
-                ablock = avol and get_zfs_block(avol, a.path)
-                bblock = bvol and get_zfs_block(bvol, b.path)
+                ablock = zdb.get_block(self.asnap.fullname, a.stat.st_ino)
+                bblock = zdb.get_block(self.bsnap.fullname, b.stat.st_ino)
                 if ablock and ablock == bblock:
                     nochange = True
                     if proc.verbose:
