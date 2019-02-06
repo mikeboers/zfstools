@@ -106,6 +106,8 @@ class SyncJob(Job):
             cache_key_content = f'{self.snapa.fullname},{self.snapa.creation},{self.snapb.fullname},{self.snapb.creation}'
             cache_key = hashlib.md5(cache_key_content.encode()).hexdigest()[:8]
 
+            prefix = self.src_subdir + '/' if self.src_subdir else None
+
             for e in diff.iter_diff(self.snapa.volname, self.snapa.name, self.snapb.name, cache_key=cache_key):
 
                 if e.op != 'R':
@@ -115,9 +117,14 @@ class SyncJob(Job):
 
                 arelpath = e.relpath
                 brelpath = e.new_relpath
-                if self.src_subdir:
-                    arelpath = os.path.join(arelpath, self.src_subdir)
-                    brelpath = os.path.join(brelpath, self.src_subdir)
+
+                # If we have a src_subdir, restrict to that, and make the
+                # relpaths relative to that.
+                if prefix:
+                    if not arelpath.startswith(prefix):
+                        continue
+                    arelpath = arelpath[len(prefix):]
+                    brelpath = brelpath[len(prefix):]
 
                 a = a_by_rel.pop(arelpath)
                 b = b_by_rel.pop(brelpath)
