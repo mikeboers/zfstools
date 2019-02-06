@@ -1,0 +1,22 @@
+
+
+May be able to check file modification via the `cr_txg 14317298` in the header of `zdb -d`.
+
+
+root@hopper:/home/mikeboers/dev/zfsreplay# gcc -I ../zfs/include -I ../zfs/include/spl -I /usr/src/linux-headers-4.15.0-45-generic/include myioctl.c
+root@hopper:/home/mikeboers/dev/zfsreplay# ll /lib/modules/4.15.0-45-generic/build/include/asm-generic/
+
+
+---
+
+WARNING: Inodes match despite file type
+Node(name='screenshots', path='/mnt/tank/heap/sitg/.zfs/snapshot/trailer/scratch/2016-01-19-screenshot/screenshots', relpath='scratch/2016-01-19-screenshot/screenshots', fmt=16384, is_dir=True, is_file=False, is_link=False, stat=os.stat_result(st_mode=16877, st_ino=356471, st_dev=99, st_nlink=2, st_uid=501, st_gid=99, st_size=31, st_atime=1479040994, st_mtime=1449596421, st_ctime=1478962204))
+Node(name='._.DS_Store', path='/mnt/tank/heap/sitg/.zfs/snapshot/2018-08-01T02:00:01-04:00/scratch/2017/2017-05-12/._.DS_Store', relpath='scratch/2017/2017-05-12/._.DS_Store', fmt=32768, is_dir=False, is_file=True, is_link=False, stat=os.stat_result(st_mode=33188, st_ino=356471, st_dev=100, st_nlink=1, st_uid=501, st_gid=20, st_size=4096, st_atime=1495117094, st_mtime=1495031383, st_ctime=1495031383))
+
+WARNING: Inodes match despite file type
+Node(name='it', path='/mnt/tank/heap/sitg/.zfs/snapshot/trailer/scratch/2016-02-27/it', relpath='scratch/2016-02-27/it', fmt=16384, is_dir=True, is_file=False, is_link=False, stat=os.stat_result(st_mode=16893, st_ino=356528, st_dev=99, st_nlink=2, st_uid=501, st_gid=99, st_size=73, st_atime=1479040994, st_mtime=1456681625, st_ctime=1478962204))
+Node(name='Screen Shot 2017-05-18 at 2.01.32 PM.png', path='/mnt/tank/heap/sitg/.zfs/snapshot/2018-08-01T02:00:01-04:00/scratch/2017/2017-05-18/Screen Shot 2017-05-18 at 2.01.32 PM.png', relpath='scratch/2017/2017-05-18/Screen Shot 2017-05-18 at 2.01.32 PM.png', fmt=32768, is_dir=False, is_file=True, is_link=False, stat=os.stat_result(st_mode=33188, st_ino=356528, st_dev=100, st_nlink=1, st_uid=501, st_gid=20, st_size=420836, st_atime=1495549627, st_mtime=1495130495, st_ctime=1495549629))
+
+WARNING: Inodes match despite file type
+Node(name='scale-imagePlane', path='/mnt/tank/heap/sitg/.zfs/snapshot/trailer/scratch/2016-10-27/scale-imagePlane', relpath='scratch/2016-10-27/scale-imagePlane', fmt=16384, is_dir=True, is_file=False, is_link=False, stat=os.stat_result(st_mode=16877, st_ino=356946, st_dev=99, st_nlink=2, st_uid=501, st_gid=99, st_size=4, st_atime=1479040994, st_mtime=1477580276, st_ctime=1478962204))
+Node(name='._Screen Shot 2017-05-27 at 12.50.25 AM.png', path='/mnt/tank/heap/sitg/.zfs/snapshot/2018-08-01T02:00:01-04:00/scratch/2017/2017-05-27/._Screen Shot 2017-05-27 at 12.50.25 AM.png', relpath='scratch/2017/2017-05-27/._Screen Shot 2017-05-27 at 12.50.25 AM.png', fmt=32768, is_dir=False, is_file=True, is_link=False, stat=os.stat_result(st_mode=33188, st_ino=356946, st_dev=100, st_nlink=1, st_uid=501, st_gid=20, st_size=4096, st_atime=1498937443, st_mtime=1495860705, st_ctime=1495860705))
