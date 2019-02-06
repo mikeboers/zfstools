@@ -17,13 +17,13 @@ class Processor(object):
         
     def prename(self, src, dst):
         if self.verbose:
-            print(field('prename'), dst, src)
+            print(field('prename'), f'{dst}\t{src}')
         if not self.dry_run:
             os.rename(src, dst)
 
     def rename(self, src, dst, original=None):
         if self.verbose:
-            print(field('rename'), dst, src, f'(from {original})' if original else '')
+            print(field('rename'), f'{dst}\t{original or src}\t{"via " if original else ""}{src if original else ""}')
         if not self.dry_run:
             os.rename(src, dst)
 
@@ -46,7 +46,7 @@ class Processor(object):
             os.mkdir(path)
     def symlink(self, source, link_name):
         if self.verbose:
-            print(field('symlink'), link_name, source)
+            print(field('symlink'), f'{link_name}\t{source}')
         if not self.dry_run:
             os.symlink(source, link_name)
 
@@ -59,7 +59,7 @@ class Processor(object):
 
     def chown(self, path, uid, gid, verbosity=1):
         if self.verbose >= verbosity:
-            print(field('chown'), f'{uid}:{gid} {path}')
+            print(field('chown'), f'{uid}:{gid}\t{path}')
         if not self.dry_run:
             os.chown(path, uid, gid, follow_symlinks=False)
 
@@ -72,7 +72,7 @@ class Processor(object):
     def copy(self, src_path, dst_path):
 
         if self.verbose:
-            print(field('copy'), dst_path, src_path)
+            print(field('copy'), f'{dst_path}\t{src_path}')
         if self.dry_run:
             return
 
@@ -96,7 +96,7 @@ class Processor(object):
     def merge(self, src_path, dst_path):
 
         if self.verbose:
-            print(field('merge'), dst_path, src_path)
+            print(field('merge'), f'{dst_path}\t{src_path}')
         if self.dry_run:
             return
 

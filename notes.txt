@@ -1,5 +1,16 @@
 
 
+TODO
+====
+
+- set some attributes on the snapshot
+
+    replay:source={volume}@{snapshot}
+    replay:creation={creation}
+    replay:start_time
+    replay:end_time
+
+
 May be able to check file modification via the `cr_txg 14317298` in the header of `zdb -d`.
 
 

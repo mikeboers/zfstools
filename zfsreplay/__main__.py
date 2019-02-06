@@ -105,6 +105,9 @@ class SyncJob(Job):
         # have move detection so... it is only the moves that were done by hand
         # to avoid rsync copying everything.
 
+        if proc.verbose:
+            print("Scanning for inode sets")
+
         for inode, bnodes in bidx.by_ino.items():
 
             # We only deal with files/links like this.
@@ -149,6 +152,11 @@ class SyncJob(Job):
             # Again... don't treat them as hardlinks.
             pairs.append((anodes[0], bnodes[0]))
 
+        if proc.verbose:
+            num_inode_pairs = len(pairs)
+            print(f"    {num_inode_pairs} pairs from {len(aidx.by_ino)}/{len(bidx.by_ino)} inodes")
+            print("Scanning for relpath pairs")
+
         # Collect pairs by relpath.
         for relpath, b in list(b_by_rel.items()):
 
@@ -164,6 +172,9 @@ class SyncJob(Job):
 
             pairs.append((a, b))
 
+        if proc.verbose:
+            num_relpath_pairs = len(pairs) - num_inode_pairs
+            print(f"    {num_relpath_pairs} pairs from {len(aidx.by_rel)}/{len(bidx.by_rel)} paths")
 
         # We MUST operate in this order:
         # - pre-move moving files aside
