@@ -58,7 +58,8 @@ class Job(object):
 class SyncJob(Job):
 
     def __init__(self, volname, snapname, a, b, target=None, sort_key=None, ignore=None,
-        is_zfs=False, is_link=False, snapa=None, snapb=None, src_subdir=None):
+        is_zfs=False, is_link=False, snapa=None, snapb=None, src_subdir=None,
+        metadata=None):
         super().__init__(volname, snapname, target, sort_key)
         self.a = a
         self.b = b
@@ -80,6 +81,8 @@ class SyncJob(Job):
         self._prename_dir = None
         self._prename_count = 0
         self._prename_group = None
+
+        self.metadata = dict(metadata or {})
 
     def run(self, proc, threads=1):
 
@@ -357,9 +360,17 @@ jobs = []
 
 
 
-def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip_start=False, is_zfs=False, is_link=False):
+def make_jobs(snaps, dst_volume,
+    src_subdir='',
+    dst_subdir='',
+    ignore=None,
+    skip_start=False,
+    is_zfs=False,
+    is_link=False,
+):
 
     target = os.path.normpath(os.path.join('/mnt', dst_volume, dst_subdir))
+
 
     for i in range(len(snaps) - 1):
 
@@ -368,17 +379,21 @@ def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip
 
         if (not i) and (not skip_start):
             jobs.append(SyncJob(
-                dst_volume,
-                a.creation.strftime('%Y-%m-%dT%H') + '.' + a.volname.split('/')[-1],
+                volname=dst_volume,
+                snapname=a.creation.strftime('%Y-%m-%dT%H') + '.' + a.volname.split('/')[-1],
                 a=target,
                 b=os.path.normpath(os.path.join(a.root, src_subdir)),
                 target=target,
                 ignore=ignore,
+                metadata=dict(
+                    source_snapshot=a.fullname,
+                    source_creation=a.creation.isoformat('T'),
+                ),
             ))
 
         jobs.append(SyncJob(
-            dst_volume,
-            b.creation.strftime('%Y-%m-%dT%H') + '.' + b.volname.split('/')[-1],
+            volname=dst_volume,
+            snapname=b.creation.strftime('%Y-%m-%dT%H') + '.' + b.volname.split('/')[-1],
             a=os.path.normpath(os.path.join(a.root, src_subdir)),
             b=os.path.normpath(os.path.join(b.root, src_subdir)),
             target=target,
@@ -388,6 +403,10 @@ def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip
             snapa=a,
             snapb=b,
             src_subdir=src_subdir,
+            metadata=dict(
+                source_snapshot=b.fullname,
+                source_creation=b.creation.isoformat('T'),
+            ),
         ))
 
 
@@ -417,11 +436,11 @@ def make_timestamped_jobs(src_name, *args, **kwargs):
             creation = dt.datetime.strptime(name, '%Y-%m-%d')
 
         snaps.append(Snapshot(
-            f'backups/{src_name}@{name}',
-            'bak', # This is where it makes the name from. # This is hacky.
-            name,
-            creation,
-            os.path.join(root, name),
+            fullname=f'sitg/backups/{src_name}@{name}',
+            volname= f'sitg/backups/{src_name}.linked', # This is where it makes the name from. # This is hacky.
+            name=name,
+            creation=creation,
+            root=os.path.join(root, name),
         ))
 
     make_jobs(snaps, *args, **kwargs, is_link=True)
@@ -452,6 +471,7 @@ def main():
 def do_set(args, set_):
 
     Index._cache.clear()
+    jobs[:] = []
 
     if set_ == 'main':
 
@@ -514,7 +534,7 @@ def do_set(args, set_):
 
     cmd = ['zfs', 'rollback', existing_snapshots[-1].fullname]
     if args.verbose > 1:
-        print(' '.join(cmd))
+        print('$', ' '.join(cmd))
     if not args.dry_run:
         subprocess.check_call(cmd)
 
@@ -541,26 +561,32 @@ def do_set(args, set_):
             click.secho(f'Already done at {existing.creation.isoformat("T")}', fg='green')
             continue
 
+        start_time = dt.datetime.utcnow()
         if args.dry_run < 2:
             click.echo('---')
-            start_time = dt.datetime.utcnow()
             try:
                 job.run(processor, threads=args.threads)
             except Exception as e:
                 click.secho(f'{e.__class__.__name__}: {e}', fg='red')
                 pdb.post_mortem()
                 raise # Don't let us keep going.
-            end_time = dt.datetime.utcnow()
+        end_time = dt.datetime.utcnow()
 
         cmd = ['zfs', 'snapshot', job.fullname]
         if args.verbose > 1:
-            print(' '.join(cmd))
+            print('$', ' '.join(cmd))
         if not args.dry_run:
             subprocess.check_call(cmd)
-            # subprocess.check_call(['zfs', 'set', f'replay:source={job.source}', job.fullname])
-            # subprocess.check_call(['zfs', 'set', f'replay:creation={job.creation.isoformat("T")}', job.fullname])
-            # subprocess.check_call(['zfs', 'set', f'replay:start={start_time.isoformat("T")}', job.fullname])
-            # subprocess.check_call(['zfs', 'set', f'replay:end={end_time.isoformat("T")}', job.fullname])
+
+        meta = job.metadata
+        meta['start'] = start_time.isoformat('T')
+        meta['end'] = end_time.isoformat('T')
+        for key, value in meta.items():
+            cmd = ['zfs', 'set', f'replay:{key}={value}', job.fullname]
+            if args.verbose:
+                print('$', ' '.join(cmd))
+            if not args.dry_run:
+                subprocess.check_call(cmd)
 
         done += 1
         if args.count and not args.dry_run and args.count >= done:
