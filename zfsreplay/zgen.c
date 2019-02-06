@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <errno.h>
 
 // #include <libzfs.h>
 
@@ -133,10 +134,14 @@ typedef struct zfs_cmd {
 
 int main(int argc, char** argv) {
         
-    if (argc < 3) {
-        printf("usage: %s SNAPSHOT INODE\n", argv[0]);
+
+    int error = 0;
+
+    if (argc < 2) {
+        printf("usage: %s SNAPSHOT [INODE+]\n", argv[0]);
         return 1;
     }
+
 
     zfs_cmd_t zc = {"\0"};
 
@@ -144,27 +149,54 @@ int main(int argc, char** argv) {
     // char *dataset_name = "tank/test/src@v2";
     strncpy(zc.zc_name, argv[1], sizeof (zc.zc_name));
 
-    zc.zc_obj = atoi(argv[2]);
 
     int fd = open("/dev/zfs", O_RDONLY);
     if (!fd) {
-        printf("Error opening /dev/zfs\n");
+        printf("error opening /dev/zfs\n");
         return 1;
     }
 
-    int error = 0;
-    error = ioctl(fd, ZFS_IOC_OBJ_TO_STATS, &zc);
+    int argc_left = argc - 2;
 
-    if (error) {
-        printf("Error ioctl %d\n", error);
-        return error;
+    while (1) {
+
+        if (argc_left) {
+            zc.zc_obj = atoi(argv[argc - argc_left]);
+        } else {
+            zc.zc_obj = 0;
+            scanf("%lu", &zc.zc_obj);
+            if (!zc.zc_obj) {
+                return 0;
+            }
+        }
+
+        printf("%lu ", zc.zc_obj);
+
+        error = ioctl(fd, ZFS_IOC_OBJ_TO_STATS, &zc);
+
+        if (error) {
+            printf("ERROR ioctl=%d errno=%d: %s\n", error, errno, strerror(errno));
+            continue;
+        }
+
+        printf("%lu\n",
+            zc.zc_stat.zs_gen
+            // zc.zc_stat.zs_mode,
+            // zc.zc_stat.zs_links,
+            // zc.zc_stat.zs_ctime[0],
+            // zc.zc_stat.zs_ctime[1]
+        );
+        fflush(stdout);
+
+        if (argc_left) {
+            if (!--argc_left) {
+                break;
+            }
+        }
+
     }
-
-    printf("gen:   %ld\n", zc.zc_stat.zs_gen);
-    printf("mode:  %ld\n", zc.zc_stat.zs_mode);
-    printf("links: %ld\n", zc.zc_stat.zs_links);
-    printf("ctime: %ld %ld\n", zc.zc_stat.zs_ctime[0], zc.zc_stat.zs_ctime[1]);
 
     return 0;
 
 }
+
