@@ -130,9 +130,9 @@ class SyncJob(Job):
 
             for e in diff.iter_diff(self.snapa.volname, self.snapa.name, self.snapb.name):
 
-                if e.op != diff.OP_RENAME:
+                if e.op != 'R':
                     continue
-                if e.type not in ('R', '@'): # We can do links too.
+                if e.type not in ('F', '@'): # We can do links too.
                     continue
 
                 arelpath = e.relpath
