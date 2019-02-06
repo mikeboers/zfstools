@@ -15,6 +15,7 @@ import click
 
 from .index import Index
 from .processor import Processor
+from . import diff
 
 
 Snapshot = collections.namedtuple('Snapshot', ('fullname', 'volname', 'name', 'creation', 'root'))
@@ -76,12 +77,22 @@ class Job(object):
 
 class SyncJob(Job):
 
-    def __init__(self, volname, snapname, a, b, target=None, sort_key=None, ignore=None, is_zfs=False):
+    def __init__(self, volname, snapname, a, b, target=None, sort_key=None, ignore=None,
+        is_zfs=False, snapa=None, snapb=None, src_subdir=None):
         super().__init__(volname, snapname, target, sort_key)
         self.a = a
         self.b = b
         self.ignore = ignore
+
         self.is_zfs = is_zfs
+        self.snapa = snapa
+        self.snapb = snapb
+        self.src_subdir = src_subdir
+        if is_zfs:
+            if not (snapa and snapb):
+                raise ValueError("is_zfs requires two snapshots")
+            if snapa.volname != snapb.volname:
+                raise ValueError("is_zfs required matching volnames")
 
         self._prename_root = os.path.join(target, f'.zfsreplay-{random.randrange(1e12)}')
         self._prename_dir = None
@@ -92,73 +103,80 @@ class SyncJob(Job):
 
         self._proc = proc
 
-        ''' 1. Get a full index of A and B. Assume T starts looking like A.
-            - This is the paths and stats of all folders and files. Folders don't need their contents.
-        '''
+        # 1. Get a full index of A and B. Assume T starts looking like A.
+        # This is the paths and stats of all folders and files. Folders don't need their contents.
         aidx = Index.get(self.a, ignore=self.ignore)
         bidx = Index.get(self.b, ignore=self.ignore)
         
-        '''3. Identify all AB pairs; this will be via inode and then name.
-            - Same inode from/to link snapshot means the file has not changed.
-            - Same ctime from/to zfs snapshot means the file has not changed.
-            - Same indirect block from/to zfs snapshot means the file has not changed.
-                This is kinda slow, so only bother when the file is large. I don't think
-                we can make it go much faster without a TON of effort.
-        '''
+        # 2. Identify all AB pairs; this will be via `zfs diff` or inode, and then name.
+        # - Same inode from/to link snapshot means the file has not changed.
+        # - `zfs diff` will give us renames (because inodes are not reliable).
+        # - Same ctime from/to zfs snapshot means the file has not changed.
+        # - Same indirect block from/to zfs snapshot means the file has not changed.
+        
+        # In the future we should change this from pairs of files to sets of
+        # hardlinks. I don't think I really have a significant quantity of those,
+        # but it would be good to handle them all properly.
+        
         a_by_rel = aidx.by_rel.copy()
         b_by_rel = bidx.by_rel.copy()
         pairs = []
 
-        # Collect pairs by inode.
-        # For linked snapshots we can directly see when files have not been changed.
-        # For ZFS snapshots, we get 99% information into if they have been moved.
-        for inode, bnodes in bidx.by_ino.items():
+        if self.is_zfs:
 
-            # We only deal with files like this.
-            if not bnodes[0].is_file:
-                continue
+            # We can't use inodes with 100% accuracy, because they get recycled.
+            # We do have the ability to `zfs diff` for accurate moves though.
+            # So lets do that!
 
-            anodes = aidx.by_ino.get(inode, ())
-            if not anodes:
-                continue
+            for e in diff.iter_diff(self.snapa.volname, self.snapa.name, self.snapb.name):
 
-            # We need to be careful because inodes can be recycled between ZFS
-            # snapshots.
+                if e.op != diff.OP_RENAME:
+                    continue
+                if e.type not in ('R', '@'): # We can do links too.
+                    continue
 
-            # We still aren't really sure what is going on.
-            # These two checks aren't quite perfect, but... eh.
-            if not anodes[0].is_file:
-                click.secho('WARNING: inode match despite file type', fg='yellow')
-                click.secho('\n'.join(map(str, anodes)), fg='yellow')
-                click.secho('\n'.join(map(str, bnodes)), fg='yellow')
-                continue
+                arelpath = e.relpath
+                brelpath = e.new_relpath
+                if self.src_subdir:
+                    arelpath = os.path.join(arelpath, self.src_subdir)
+                    brelpath = os.path.join(brelpath, self.src_subdir)
 
-            if (
-                anodes[0].stat.st_size != bnodes[0].stat.st_size and
-                os.path.basename(anodes[0].relpath) != os.path.basename(bnodes[0].relpath)
-            ):
-                click.secho('WARNING: inode appears recycled:', fg='yellow')
-                click.secho('\n'.join(map(str, anodes)), fg='yellow')
-                click.secho('\n'.join(map(str, bnodes)), fg='yellow')
-                continue
+                a = a_by_rel.pop(arelpath)
+                b = b_by_rel.pop(brelpath)
 
-            # We have them by inodes, so we don't need to look at them by path.
-            for n in anodes:
-                a_by_rel.pop(n.relpath)
-            for n in bnodes:
-                b_by_rel.pop(n.relpath)
+                pairs.append((a, b))
 
-            if len(anodes) > 1 or len(bnodes) > 1:
-                click.secho("WARNING: There are hardlinks.", fg='yellow')
-                click.secho('\n'.join(map(str, anodes)), fg='yellow')
-                click.secho('\n'.join(map(str, bnodes)), fg='yellow')
+        else:
 
-            # If we have multiple, treat them all as a[0] to all bs. This will
-            # work out fine. Promise.
-            #for n in bnodes:
-            #    pairs.append((anodes[0], n))
+            for inode, bnodes in bidx.by_ino.items():
 
-            pairs.append((anodes[0], bnodes[0]))
+                # For linked snapshots we can directly see when files have not been changed.
+
+                # We only deal with files like this.
+                if not bnodes[0].is_file:
+                    continue
+
+                anodes = aidx.by_ino.get(inode, ())
+                if not anodes:
+                    continue
+
+                # We have them by inodes, so we don't need to look at them by path.
+                for n in anodes:
+                    a_by_rel.pop(n.relpath)
+                for n in bnodes:
+                    b_by_rel.pop(n.relpath)
+
+                if len(anodes) > 1 or len(bnodes) > 1:
+                    click.secho("WARNING: There are hardlinks.", fg='yellow')
+                    click.secho('\n'.join(map(str, anodes)), fg='yellow')
+                    click.secho('\n'.join(map(str, bnodes)), fg='yellow')
+
+                # If we have multiple, treat them all as a[0] to all bs. This will
+                # work out fine. Promise.
+                #for n in bnodes:
+                #    pairs.append((anodes[0], n))
+
+                pairs.append((anodes[0], bnodes[0]))
 
         # Collect pairs by relpath.
         for relpath, b in list(b_by_rel.items()):
@@ -364,6 +382,9 @@ def make_jobs(snaps, dst_volume, src_subdir='', dst_subdir='', ignore=None, skip
             target=target,
             ignore=ignore,
             is_zfs=is_zfs,
+            snapa=a,
+            snapb=b,
+            src_subdir=src_subdir,
         ))
 
 
