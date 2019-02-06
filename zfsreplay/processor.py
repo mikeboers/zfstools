@@ -15,9 +15,15 @@ class Processor(object):
         self.dry_run = dry_run
         self.verbose = verbose
         
-    def rename(self, src, dst):
+    def prename(self, src, dst):
         if self.verbose:
-            print(field('rename'), src, dst)
+            print(field('prename'), src, dst)
+        if not self.dry_run:
+            os.rename(src, dst)
+
+    def rename(self, src, dst, original=None):
+        if self.verbose:
+            print(field('rename'), src, dst, f'(from {original})' if original else '')
         if not self.dry_run:
             os.rename(src, dst)
 

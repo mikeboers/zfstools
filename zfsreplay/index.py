@@ -43,9 +43,6 @@ def walk(root, ignore=None, rel_root=None, root_dev=None, _depth=0):
         path = os.path.join(root, name)
         st = os.lstat(path)
 
-        if not _depth:
-            print(path, st)
-
         if st.st_dev != root_dev:
             continue
 

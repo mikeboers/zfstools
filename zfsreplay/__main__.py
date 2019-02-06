@@ -5,9 +5,11 @@ import collections
 import datetime as dt
 import os
 import pdb
+import random
+import re
+import shutil
 import stat
 import subprocess
-import re
 
 import click
 
@@ -81,6 +83,11 @@ class SyncJob(Job):
         self.ignore = ignore
         self.is_zfs = is_zfs
 
+        self._prename_root = os.path.join(target, f'.zfsreplay-{random.randrange(1e12)}')
+        self._prename_dir = None
+        self._prename_count = 0
+        self._prename_group = None
+
     def run(self, proc, threads=1):
 
         self._proc = proc
@@ -135,11 +142,39 @@ class SyncJob(Job):
 
             pairs.append((a, b))
 
+
         # We MUST operate in this order:
+        # - pre-move moving files aside
+        # - remove old dirs/files
         # - create new dirs
         # - create new files and update existing
-        # - remove old dirs/files
         # - set mtime on dirs
+
+
+        # Pre-move moving files.
+        # This gets them out of directories that are going to be removed, and
+        # out of the way of other files or directories that might go in their
+        # place. It is a bit of overhead to do it for all of them, but whatever.
+        for a, b in pairs:
+            if a.is_file and a.relpath != b.relpath:
+                count = self._prename_count
+                self._prename_count = count + 1
+                group, node = divmod(count, 256)
+                if group != self._prename_group:
+                    self._prename_group = group
+                    self._prename_dir = os.path.join(self._prename_root, f'{group:02x}')
+                    os.makedirs(self._prename_dir)
+                b.prename_path = os.path.join(self._prename_dir, f'{node:02x}')
+                proc.prename(os.path.join(self.target, a.relpath), b.prename_path)
+
+        # Delete all files and directories that are in A but not B.
+        # We're going in reverse so files are done before directories.
+        for relpath, node in sorted(a_by_rel.items(), reverse=True):
+            tpath = os.path.join(self.target, node.relpath)
+            if node.is_dir:
+                self._proc.rmdir(tpath)
+            else:
+                self._proc.unlink(tpath)
 
         # Create new directories.
         # Their mtimes will be set wrong if there are any contents added, so
@@ -151,35 +186,33 @@ class SyncJob(Job):
         work = []
 
         # Update files which exist in both.
+        # This will be the secondary moves.
         work.extend((self.update_pair, (a, b)) for a, b in pairs)
 
         # Create new dirs/files that are in B but not A.
         work.extend((self.create_new, (node, )) for node in b_by_rel.values() if not node.is_dir)
 
+        # For aesthetics, we do them in order.
         work.sort(key=lambda x: x[1][-1].path)
 
         executor = futures.ThreadPoolExecutor(threads)
         for _ in executor.map(lambda x: x[0](*x[1]), work):
             pass
 
-        # Delete all files and directories that are in A but not B.
-        # We're going in reverse so files are done before directories.
-        for relpath, node in sorted(a_by_rel.items(), reverse=True):
-            tpath = os.path.join(self.target, node.relpath)
-            if node.is_dir:
-                self._proc.rmdir(tpath)
-            else:
-                self._proc.unlink(tpath)
+        # Cleanup the premove root.
+        if self._prename_count:
+            shutil.rmtree(self._prename_root)
 
         # Finally we set the mtimes of all directories.
         # It might be marginally more efficient to track the changes we've
         # made and not hit the filesystem for it. Oh well.
-        for b in bidx.nodes:
-            if b.is_dir:
-                tpath = os.path.join(self.target, b.relpath)
-                st = os.stat(tpath)
-                if (st.st_atime != b.stat.st_atime) or (st.st_mtime != b.stat.st_mtime):
-                    proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=3)
+        if not proc.dry_run:
+            for b in bidx.nodes:
+                if b.is_dir:
+                    tpath = os.path.join(self.target, b.relpath)
+                    st = os.stat(tpath)
+                    if (st.st_atime != b.stat.st_atime) or (st.st_mtime != b.stat.st_mtime):
+                        proc.utime(tpath, b.stat.st_atime, b.stat.st_mtime, verbosity=3)
 
     def update_pair(self, a, b):
 
@@ -189,8 +222,9 @@ class SyncJob(Job):
         tpath = os.path.join(self.target, b.relpath)
 
         # Move everything into the target namespace first.
-        if a.relpath != b.relpath:
-            proc.rename(os.path.join(self.target, a.relpath), tpath)
+        # They've already been moved.
+        if a.is_file and a.relpath != b.relpath:
+            proc.rename(b.prename_path, tpath, original=a.relpath)
 
         # If this is not ZFS, hardlinks can't have different (meta)data.
         if (not self.is_zfs) and a.stat.st_ino == b.stat.st_ino:
@@ -406,6 +440,13 @@ def do_set(args, set_):
         make_zfs_jobs('tank/heap/sitg/work', 'tank/sitgcache',
             src_subdir='cache-film',
             ignore=set(('TE', )),
+        )
+
+    if set_ == 'test':
+
+        make_zfs_jobs('tank/test/src', 'tank/test/dst',
+            ignore=['ignore'],
+            skip_start=True,
         )
 
 
