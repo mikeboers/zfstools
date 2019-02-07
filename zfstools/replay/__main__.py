@@ -313,8 +313,8 @@ class SyncJob(Job):
             # then the file did not change.
             nochange = False
             if self.is_zfs and b.stat.st_size > (1024 * 1024 * 50):
-                ablock = zdb.get_block(self.src_snapshot_a.fullname, a.ino)
-                bblock = zdb.get_block(self.src_snapshot_b.fullname, b.ino)
+                ablock = zdb.get_block(self.src_snapshot_a.name, a.ino)
+                bblock = zdb.get_block(self.src_snapshot_b.name, b.ino)
                 if ablock and ablock == bblock:
                     nochange = True
                     if proc.verbose:
