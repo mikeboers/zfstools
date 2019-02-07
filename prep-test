@@ -1,0 +1,54 @@
+#!/bin/bash
+
+
+zfs rollback -r tank/test/src@blank
+zfs rollback -r tank/test/dst@blank
+
+cd /mnt/tank/test/src
+
+echo a1 > anchor1
+echo a2 > anchor2
+
+echo v1 > moving-file
+echo v1 > replacing-file
+echo v1 > changing-file
+
+mkdir deleting-dir
+echo v1 > deleting-dir/content
+ln anchor1 deleting-dir/
+
+mkdir moving-dir
+echo v1 > moving-dir/content
+ln anchor2 moving-dir/
+
+ln -s anchor1 moving-link
+ln -s anchor1 changing-link
+
+echo 1 > swap1
+echo 2 > swap2
+
+
+
+zfs snapshot tank/test/src@v1
+
+mv moving-file moved-file
+
+rm replacing-file
+echo v2 > replacing-file
+
+echo v2 > changing-file
+
+rm -rf deleting-dir
+
+mv moving-dir moved-dir
+
+mv moving-link moved-link
+ln -sf anchor2 changing-link
+
+mv swap1 x
+mv swap2 swap1
+mv x swap2
+
+
+zfs snapshot tank/test/src@v2
+
