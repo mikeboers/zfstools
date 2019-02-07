@@ -55,6 +55,8 @@ class SyncJob(Job):
         src_snapshot_a=None,
         src_snapshot_b=None,
 
+        pre_bash=None,
+
         metadata=None,
         order_key=None,
 
@@ -79,6 +81,8 @@ class SyncJob(Job):
             if src_snapshot_a.volume != src_snapshot_b.volume:
                 raise ValueError("is_zfs requires matching volumes")
 
+        self.pre_bash = pre_bash
+
         self._prename_root = os.path.join(target, f'.zfsreplay-{random.randrange(1e12)}')
         self._prename_dir = None
         self._prename_count = 0
@@ -87,6 +91,13 @@ class SyncJob(Job):
     def run(self, proc, threads=1):
 
         self._proc = proc
+
+        if self.pre_bash:
+            cmd = ['bash', '-c', self.pre_bash]
+            if proc.verbose:
+                print('$', ' '.join(cmd))
+            if not proc.dry_run:
+                subprocess.check_call(cmd)
 
         # 1. Get a full index of A and B. Assume T starts looking like A.
         # This is the paths and stats of all folders and files. Folders don't need their contents.
@@ -498,9 +509,18 @@ def do_set(args, set_):
             dst_subdir='trailer',
         )
 
+        jobs.append(SyncJob(
+            'tank/sitgartifacts',
+            '2016-05-25T00.out-nosync',
+            target='/mnt/tank/sitgartifacts/trailer-nosync',
+            src_root_a='/mnt/tank/sitgartifacts/trailer-nosync',
+            src_root_b='/mnt/tank/heap/sitg/out/trailer-nosync',
+            pre_bash='mkdir /mnt/tank/sitgartifacts/trailer-nosync',
+        ))
+
         make_zfs_jobs('tank/heap/sitg/work', 'tank/sitgartifacts',
             src_subdir='artifacts-film',
-            ignore=set(('trailer', )),
+            ignore=set(('trailer', 'trailer-nosync')),
         )
 
     if set_ == 'cache':
@@ -510,8 +530,8 @@ def do_set(args, set_):
             'tank/sitgcache',
             '2015-08-02T00.sitg',
             target='/mnt/tank/sitgcache/TE',
-            a='/mnt/tank/sitgcache/TE',
-            b='/mnt/tank/heap/sitg/cache',
+            src_root_a='/mnt/tank/sitgcache/TE',
+            src_root_b='/mnt/tank/heap/sitg/cache',
         ))
 
         # The work caches.
