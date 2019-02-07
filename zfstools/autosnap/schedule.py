@@ -2,6 +2,7 @@ import datetime
 import re
 
 
+
 def parse_datetime(input_):
 
     for pattern in (
@@ -14,7 +15,7 @@ def parse_datetime(input_):
         if not m:
             continue
         
-        ints = map(int, m.groups())
+        ints = list(map(int, m.groups()))
         while len(ints) < 6:
             ints.append(0)
 
@@ -53,7 +54,7 @@ def label_snapshots(snapshots):
         if i + 1 == len(snapshots):
             by_period[(-1, 'latest', None)] = name
 
-        if isinstance(ctime, basestring):
+        if not isinstance(ctime, datetime.datetime):
             ctime = parse_datetime(ctime)
             if not ctime:
                 to_keep[name] = 'unknown'
@@ -80,7 +81,7 @@ def label_snapshots(snapshots):
         if days < 7:
             by_period[(0, 'all', ctime)] = name
     
-    to_keep.update({name: label for (_, label, _), name in sorted(by_period.iteritems(), reverse=True)})
+    to_keep.update({name: label for (_, label, _), name in sorted(by_period.items(), reverse=True)})
     return to_keep
 
 

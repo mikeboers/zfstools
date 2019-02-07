@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import print_function
+
 import argparse
 import datetime
 import os
@@ -46,7 +48,7 @@ def main():
     def destroy(snapshot):
         cmd = ['sudo', 'zfs', 'destroy', snapshot]
         if args.verbose:
-            print '    $', ' '.join(cmd)
+            print('    $', ' '.join(cmd))
         if not args.dry_run:
             yes = args.yes
             if not yes:
@@ -60,7 +62,7 @@ def main():
 
     for line in subprocess.check_output(['sudo', 'zfs', 'list', '-H', '-o', 'name,autosnap:autosnap,autosnap:autoprune']).splitlines():
         
-        line = line.strip()
+        line = line.strip().decode()
         if not line:
             continue
 
@@ -83,26 +85,26 @@ def main():
 
         if volume in args.exclude:
             if args.verbose:
-                print "Skipping excluded", volume, "."
+                print("Skipping excluded", volume, ".")
             continue
 
         if not (do_this_snap or do_this_prune):
             continue
         
         if args.verbose:
-            print
-            print volume
-            print '=' * 20
+            print()
+            print(volume)
+            print('=' * 20)
 
         if do_this_snap and do_snapshot:
             cmd = ['sudo', 'zfs', 'snapshot', '{}@{}'.format(volume, timestamp)]
             if args.verbose > 1:
-                print '$', ' '.join(cmd)
+                print('$', ' '.join(cmd))
             if not args.dry_run:
                 this_code = subprocess.call(cmd)
                 code = code or this_code
                 if this_code:
-                    print 'ERROR: Non-zero return code {} from: {}'.format(this_code, ' '.join(cmd))
+                    print('ERROR: Non-zero return code {} from: {}'.format(this_code, ' '.join(cmd)))
                     continue
 
         if not do_this_prune:
@@ -118,7 +120,7 @@ def main():
             '-Hp', '-o', 'name,used,autosnap:_nonempty',
             volume,
         ]).splitlines():
-            line = line.strip()
+            line = line.strip().decode()
             if not line:
                 continue
             snapshot, used, nonempty = line.split('\t')
@@ -126,7 +128,7 @@ def main():
             ctime = parse_datetime(raw_ctime)
             if not ctime:
                 if args.verbose > 1:
-                    print 'Could not parse:', snapshot
+                    print('Could not parse:', snapshot)
                 continue
             snapshots.append((snapshot, ctime, int(used), nonempty))
 
@@ -139,7 +141,7 @@ def main():
             for i, (snapshot, raw_ctime, used, nonempty) in to_check:
 
                 if args.verbose > 1:
-                    print '%s -> %s' % (snapshot, used)
+                    print('%s -> %s' % (snapshot, used))
 
                 # Obviously too large.
                 if used > 1024**2: #102400: # 100kB.
@@ -153,7 +155,7 @@ def main():
 
                     cmd = ['sudo', 'zfs', 'diff', '-H', snapshot, snapshots[i + 1][0]]
                     if args.verbose:
-                        print '    $', ' '.join(cmd)
+                        print('    $', ' '.join(cmd))
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
                     empty = True
@@ -171,14 +173,14 @@ def main():
                             continue
 
                         if args.verbose:
-                            print '      Found change:', path
+                            print('      Found change:', path)
                         empty = False
                         break
 
                     if not empty:
                         cmd = ['sudo', 'zfs', 'set', 'autosnap:_nonempty=1', snapshot]
                         if args.verbose > 1:
-                            print '$', ' '.join(cmd)
+                            print('$', ' '.join(cmd))
                         subprocess.check_call(cmd)
                         continue
 
@@ -191,12 +193,12 @@ def main():
         for snapshot, raw_ctime, used, nonempty in sorted(snapshots):
             label = labels.get(snapshot)
             if args.verbose:
-                print '%7s %s' % (label or '-', snapshot)
+                print('%7s %s' % (label or '-', snapshot))
             if not label:
                 destroy(snapshot)
 
         if args.verbose:
-            print
+            print()
         
  
 main()
