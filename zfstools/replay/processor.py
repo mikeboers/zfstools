@@ -2,7 +2,7 @@ import os
 import time
 import stat
 
-from .utils import format_bytes
+from ..utils import format_bytes
 
 
 def field(x):

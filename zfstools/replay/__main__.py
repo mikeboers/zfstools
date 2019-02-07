@@ -16,8 +16,8 @@ import click
 
 from .index import Index
 from .processor import Processor
-from . import diff
-from . import zdb
+from .. import diff
+from .. import zdb
 
 
 Snapshot = collections.namedtuple('Snapshot', ('fullname', 'volname', 'name', 'creation', 'root'))

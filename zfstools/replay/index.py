@@ -3,7 +3,7 @@ import os
 import stat
 import time
 
-from .utils import cached_property
+from ..utils import cached_property
 
 
 BaseNode = collections.namedtuple('BaseNode', 'name path relpath ino fmt is_dir is_file is_link stat')

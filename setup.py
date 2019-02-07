@@ -3,22 +3,22 @@ from setuptools import setup, find_packages
 
 
 setup(
-    name='zfsreplay',
+    name='zfstools',
     version='1.0.0.dev0',
-    description="ZFS snapshot replay.",
+    description="ZFS tools including snapshot management and snapshot replay.",
     url='',
     
     packages=find_packages(exclude=['build*', 'tests*']),
     include_package_data=True,
     
     author='Mike Boers',
-    author_email='floss+zfsreplay@mikeboers.com',
+    author_email='floss+zfstools@mikeboers.com',
     license='BSD-3',
     
     entry_points={
         'console_scripts': '''
 
-            zfs-replay = zfsreplay.__main__:main
+            zfs-replay = zfstools.replay.__main__:main
 
         ''',
     },
