@@ -3,6 +3,7 @@ from concurrent import futures
 import argparse
 import collections
 import datetime as dt
+import hashlib
 import os
 import pdb
 import random
@@ -10,79 +11,78 @@ import re
 import shutil
 import stat
 import subprocess
-import hashlib
 
 import click
 
-from .index import Index
-from .processor import Processor
 from .. import diff
 from .. import zdb
-
-
-Snapshot = collections.namedtuple('Snapshot', ('fullname', 'volname', 'name', 'creation', 'root'))
-
-def get_zfs_snapshots(volume):
-
-    snaps_root = os.path.join('/mnt', volume, '.zfs', 'snapshot')
-
-    snapshots = []
-
-    output = subprocess.check_output(['zfs', 'list', '-rd1', '-tsnap', '-Hp', '-oname,creation', volume])
-    for line in output.decode().splitlines():
-
-        fullname, creation_raw = line.strip().split('\t')
-        volname, name = fullname.split('@')
-        creation = dt.datetime.fromtimestamp(int(creation_raw))
-
-        snapshots.append(Snapshot(fullname, volname, name, creation, os.path.join(snaps_root, name)))
-
-    return snapshots
-
-
+from ..snapshots import get_snapshots, Snapshot
+from .index import Index
+from .processor import Processor
 
 
 class Job(object):
 
-    def __init__(self, volname, snapname, target=None, sort_key=None):
-        self.volname = volname
-        self.snapname = snapname
-        self.target = target or os.path.join('/mnt', volname)
-        self.sort_key = sort_key or snapname
+    def __init__(self, dst_volume, dst_snapname, order_key=None, metadata=None):
+        self.dst_volume = dst_volume
+        self.dst_snapname = dst_snapname
+        self.order_key = order_key or dst_snapname
+        self.metadata = dict(metadata or {})
 
     @property
-    def fullname(self):
-        return f'{self.volname}@{self.snapname}'
+    def dst_snapshot_name(self):
+        return f'{self.dst_volume}@{self.dst_snapname}'
+
+    def run(self, proc, threads=1):
+        raise NotImplementedError()
 
 
 class SyncJob(Job):
 
-    def __init__(self, volname, snapname, a, b, target=None, sort_key=None, ignore=None,
-        is_zfs=False, is_link=False, snapa=None, snapb=None, src_subdir=None,
-        metadata=None):
-        super().__init__(volname, snapname, target, sort_key)
-        self.a = a
-        self.b = b
+    def __init__(self,
+
+        dst_volume,
+        dst_snapname,
+        src_root_a,
+        src_root_b,
+        target,
+
+        ignore=None,
+
+        is_link=False,
+
+        is_zfs=False,
+        src_snapshot_a=None,
+        src_snapshot_b=None,
+
+        metadata=None,
+        order_key=None,
+
+    ):
+        super().__init__(dst_volume, dst_snapname, order_key, metadata)
+
+        self.target = target
+
+        self.src_root_a = src_root_a
+        self.src_root_b = src_root_b
+        self.src_snapshot_a = src_snapshot_a
+        self.src_snapshot_b = src_snapshot_b
+
         self.ignore = ignore
 
         self.is_zfs = is_zfs
         self.is_link = is_link
 
-        self.snapa = snapa
-        self.snapb = snapb
-        self.src_subdir = src_subdir
         if is_zfs:
-            if not (snapa and snapb):
+            if not (src_snapshot_a and src_snapshot_b):
                 raise ValueError("is_zfs requires two snapshots")
-            if snapa.volname != snapb.volname:
-                raise ValueError("is_zfs required matching volnames")
+            if src_snapshot_a.volume != src_snapshot_b.volume:
+                raise ValueError("is_zfs requires matching volumes")
 
         self._prename_root = os.path.join(target, f'.zfsreplay-{random.randrange(1e12)}')
         self._prename_dir = None
         self._prename_count = 0
         self._prename_group = None
-
-        self.metadata = dict(metadata or {})
 
     def run(self, proc, threads=1):
 
@@ -90,8 +90,8 @@ class SyncJob(Job):
 
         # 1. Get a full index of A and B. Assume T starts looking like A.
         # This is the paths and stats of all folders and files. Folders don't need their contents.
-        aidx = Index.get(self.a, ignore=self.ignore)
-        bidx = Index.get(self.b, ignore=self.ignore)
+        aidx = Index.get(self.src_root_a, ignore=self.ignore)
+        bidx = Index.get(self.src_root_b, ignore=self.ignore)
         
         # 2. Identify all AB pairs; this will be via `zfs diff` or inode, and then name.
         # - Same inode from/to link snapshot means the file has not changed.
@@ -131,15 +131,15 @@ class SyncJob(Job):
 
                 if self.is_zfs:
 
-                    agen = zdb.get_gen(self.snapa.fullname, anodes[0].ino)
-                    bgen = zdb.get_gen(self.snapb.fullname, bnodes[0].ino)
+                    agen = zdb.get_gen(self.src_snapshot_a.name, anodes[0].ino)
+                    bgen = zdb.get_gen(self.src_snapshot_b.name, bnodes[0].ino)
 
                     if not (agen and bgen):
                         # This is disconcerting.
                         click.secho(
                             f"WARNING: Could not get generation for both nodes:\n"
-                            f"    {self.snapa.fullname} {anodes[0].ino} {anodes[0].path} -> {agen}\n"
-                            f"    {self.snapb.fullname} {bnodes[0].ino} {bnodes[0].path} -> {bgen}"
+                            f"    {self.src_snapshot_a.name} {anodes[0].ino} {anodes[0].path} -> {agen}\n"
+                            f"    {self.src_snapshot_b.name} {bnodes[0].ino} {bnodes[0].path} -> {bgen}"
                         , fg='yellow')
                         continue
 
@@ -165,7 +165,9 @@ class SyncJob(Job):
 
             if proc.verbose:
                 num_inode_pairs = len(pairs)
-                print(f"    {num_inode_pairs} pairs from {len(aidx.by_ino)}/{len(bidx.by_ino)} inodes")
+                inodes = set(aidx.by_ino)
+                inodes.update(bidx.by_ino)
+                print(f"    {num_inode_pairs} pairs from {len(inodes)} inodes")
             
         else:
             num_inode_pairs = 0
@@ -190,7 +192,9 @@ class SyncJob(Job):
 
         if proc.verbose:
             num_relpath_pairs = len(pairs) - num_inode_pairs
-            print(f"    {num_relpath_pairs} pairs from {len(aidx.by_rel)}/{len(bidx.by_rel)} paths")
+            paths = set(a_by_rel)
+            paths.update(b_by_rel)
+            print(f"    {num_relpath_pairs} pairs from {len(paths) + num_relpath_pairs} remaining paths")
 
         # We MUST operate in this order:
         # - pre-move moving files aside
@@ -198,7 +202,7 @@ class SyncJob(Job):
         # - create new dirs
         # - create new files and update existing
         # - set mtime on dirs
-
+        # This is the only order that seems to deal with all proposed changes.
 
         # Pre-move moving files/links.
         # This gets them out of directories that are going to be removed, and
@@ -309,8 +313,8 @@ class SyncJob(Job):
             # then the file did not change.
             nochange = False
             if self.is_zfs and b.stat.st_size > (1024 * 1024 * 50):
-                ablock = zdb.get_block(self.snapa.fullname, a.ino)
-                bblock = zdb.get_block(self.snapb.fullname, b.ino)
+                ablock = zdb.get_block(self.src_snapshot_a.fullname, a.ino)
+                bblock = zdb.get_block(self.src_snapshot_b.fullname, b.ino)
                 if ablock and ablock == bblock:
                     nochange = True
                     if proc.verbose:
@@ -360,7 +364,7 @@ jobs = []
 
 
 
-def make_jobs(snaps, dst_volume,
+def make_jobs(src_snapshots, dst_volume,
     src_subdir='',
     dst_subdir='',
     ignore=None,
@@ -372,39 +376,38 @@ def make_jobs(snaps, dst_volume,
     target = os.path.normpath(os.path.join('/mnt', dst_volume, dst_subdir))
 
 
-    for i in range(len(snaps) - 1):
+    for i in range(len(src_snapshots) - 1):
 
-        a = snaps[i]
-        b = snaps[i + 1]
+        a = src_snapshots[i]
+        b = src_snapshots[i + 1]
 
         if (not i) and (not skip_start):
             jobs.append(SyncJob(
-                volname=dst_volume,
-                snapname=a.creation.strftime('%Y-%m-%dT%H') + '.' + a.volname.split('/')[-1],
-                a=target,
-                b=os.path.normpath(os.path.join(a.root, src_subdir)),
+                dst_volume=dst_volume,
+                dst_snapname=a.creation.strftime('%Y-%m-%dT%H') + '.' + a.volume.split('/')[-1],
+                src_root_a=target,
+                src_root_b=os.path.normpath(os.path.join(a.root, src_subdir)),
                 target=target,
                 ignore=ignore,
                 metadata=dict(
-                    source_snapshot=a.fullname,
+                    source_snapshot=a.name,
                     source_creation=a.creation.isoformat('T'),
                 ),
             ))
 
         jobs.append(SyncJob(
-            volname=dst_volume,
-            snapname=b.creation.strftime('%Y-%m-%dT%H') + '.' + b.volname.split('/')[-1],
-            a=os.path.normpath(os.path.join(a.root, src_subdir)),
-            b=os.path.normpath(os.path.join(b.root, src_subdir)),
+            dst_volume=dst_volume,
+            dst_snapname=b.creation.strftime('%Y-%m-%dT%H') + '.' + b.volume.split('/')[-1],
+            src_root_a=os.path.normpath(os.path.join(a.root, src_subdir)),
+            src_root_b=os.path.normpath(os.path.join(b.root, src_subdir)),
             target=target,
             ignore=ignore,
             is_link=is_link,
             is_zfs=is_zfs,
-            snapa=a,
-            snapb=b,
-            src_subdir=src_subdir,
+            src_snapshot_a=a,
+            src_snapshot_b=b,
             metadata=dict(
-                source_snapshot=b.fullname,
+                source_snapshot=b.name,
                 source_creation=b.creation.isoformat('T'),
             ),
         ))
@@ -412,7 +415,7 @@ def make_jobs(snaps, dst_volume,
 
 def make_zfs_jobs(src_volume, dst_volume, src_subdir='', *args, **kwargs):
 
-    snaps = get_zfs_snapshots(src_volume)
+    snaps = get_snapshots(src_volume)
 
     if src_subdir:
         snaps = [s for s in snaps if os.path.exists(os.path.join(s.root, src_subdir))]
@@ -436,9 +439,9 @@ def make_timestamped_jobs(src_name, *args, **kwargs):
             creation = dt.datetime.strptime(name, '%Y-%m-%d')
 
         snaps.append(Snapshot(
-            fullname=f'sitg/backups/{src_name}@{name}',
-            volname= f'sitg/backups/{src_name}.linked', # This is where it makes the name from. # This is hacky.
-            name=name,
+            name=f'sitg/backups/{src_name}@{name}',
+            volume= f'sitg/backups/{src_name}.linked', # This is where it makes the name from. # This is hacky.
+            snapname=name,
             creation=creation,
             root=os.path.join(root, name),
         ))
@@ -525,14 +528,15 @@ def do_set(args, set_):
         )
 
 
-    jobs.sort(key=lambda j: j.sort_key)
+    jobs.sort(key=lambda j: j.order_key)
 
-    assert len(set(j.volname for j in jobs)) == 1
+    # We only want to be working on one destination.
+    assert len(set(j.dst_volume for j in jobs)) == 1
 
+    existing_snapshots = get_snapshots(jobs[0].dst_volume)
 
-    existing_snapshots = get_zfs_snapshots(jobs[0].volname)
-
-    cmd = ['zfs', 'rollback', existing_snapshots[-1].fullname]
+    # Start with a clean slate.
+    cmd = ['zfs', 'rollback', existing_snapshots[-1].name]
     if args.verbose > 1:
         print('$', ' '.join(cmd))
     if not args.dry_run:
@@ -547,18 +551,21 @@ def do_set(args, set_):
 
     for job in jobs:
 
-        click.secho(f'==> {job.__class__.__name__} {job.fullname}', fg='blue')
+        existing = next((s for s in existing_snapshots if s.snapname == job.dst_snapname), None)
+
+        click.secho(f'==> {job.__class__.__name__} {job.dst_snapshot_name}', fg='blue')
+        if existing:
+            click.secho(f'Already done at {existing.creation.isoformat("T")}', fg='green')
+
         click.echo(f'target: {job.target}')
-        click.echo(f'src a:  {job.a}')
-        click.echo(f'src b:  {job.b}')
+        click.echo(f'src_root_a:  {job.src_root_a}')
+        click.echo(f'src_root_b:  {job.src_root_b}')
         if job.ignore:
             click.echo(f'ignore: {" ".join(sorted(job.ignore))}')
         if job.is_zfs:
             click.echo(f'is_zfs: true')
 
-        existing = next((s for s in existing_snapshots if s.name == job.snapname), None)
         if existing:
-            click.secho(f'Already done at {existing.creation.isoformat("T")}', fg='green')
             continue
 
         start_time = dt.datetime.utcnow()
@@ -572,7 +579,7 @@ def do_set(args, set_):
                 raise # Don't let us keep going.
         end_time = dt.datetime.utcnow()
 
-        cmd = ['zfs', 'snapshot', job.fullname]
+        cmd = ['zfs', 'snapshot', job.dst_snapshot_name]
         if args.verbose > 1:
             print('$', ' '.join(cmd))
         if not args.dry_run:
@@ -582,7 +589,7 @@ def do_set(args, set_):
         meta['start'] = start_time.isoformat('T')
         meta['end'] = end_time.isoformat('T')
         for key, value in meta.items():
-            cmd = ['zfs', 'set', f'replay:{key}={value}', job.fullname]
+            cmd = ['zfs', 'set', f'replay:{key}={value}', job.dst_snapshot_name]
             if args.verbose:
                 print('$', ' '.join(cmd))
             if not args.dry_run:

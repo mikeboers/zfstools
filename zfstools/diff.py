@@ -7,6 +7,7 @@ import collections
 import click
 
 
+# TODO: Do this elsewhere...
 CACHE_ROOT = '/mnt/tank/scratch/zfs-diffs'
 
 

@@ -21,7 +21,9 @@ def walk(root, ignore=None, rel_root=None, root_dev=None, _depth=0):
     if rel_root is None:
         rel_root = root
     
-    # Prime it for ZFS.
+    # Prime ZFS. For some reason, the first time we listdir it gives us
+    # nothing back. I think that ZFS mounts the snapshots on demand, but its
+    # threshold for demand is rather high.
     if not _depth:
         os.listdir(root)
 
