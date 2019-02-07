@@ -19,6 +19,7 @@ setup(
         'console_scripts': '''
 
             zfs-replay = zfstools.replay.__main__:main
+            zfs-autosnap = zfstools.autosnap.__main__:main
 
         ''',
     },
