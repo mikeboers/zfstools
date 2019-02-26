@@ -153,7 +153,7 @@ def main():
 
                 if used:
 
-                    cmd = ['sudo', 'zfs', 'diff', '-H', snapshot, snapshots[i + 1][0]]
+                    cmd = ['sudo', 'zfs', 'diff', '-FH', snapshot, snapshots[i + 1][0]]
                     if args.verbose:
                         print('    $', ' '.join(cmd))
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
@@ -161,13 +161,20 @@ def main():
                     empty = True
                     for line in proc.stdout:
 
-                        line = line.strip()
+                        line = line.strip().decode()
                         if not line:
                             continue
 
                         line_parts = line.split('\t')
-                        path = line_parts[1]
+                        op = line_parts[0]
+                        type_ = line_parts[1]
+                        path = line_parts[2]
 
+                        # Don't care about metadata on directories.
+                        if op == 'M' and type_ == '/':
+                            continue
+
+                        # Don't care about a few little files.
                         name = os.path.basename(path)
                         if name in IGNORE_NAMES:
                             continue
