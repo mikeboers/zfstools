@@ -152,23 +152,19 @@ int main(int argc, char** argv) {
         res = scanf("%s %lu", dataset, &zc.zc_obj);
         if (!zc.zc_obj) {
             fprintf(stdout, "[zgen] ERROR while reading\n");
-            // fprintf(stderr, "[zgen] ERROR while reading\n");
             return 2;
         }
         strncpy(zc.zc_name, dataset, sizeof (zc.zc_name));
 
         fprintf(stdout, "%s %lu ", dataset, zc.zc_obj);
-        // fprintf(stderr, "%s %lu ", dataset, zc.zc_obj);
 
         res = ioctl(fd, ZFS_IOC_OBJ_TO_STATS, &zc);
+        
         if (res < 0) {
             fprintf(stdout, "ERROR %d %s\n", errno, strerror(errno));
-            // fprintf(stderr, "ERROR %d %s\n", errno, strerror(errno));
         } else {
             fprintf(stdout, "%lu\n", zc.zc_stat.zs_gen);
-            // fprintf(stderr, "%lu\n", zc.zc_stat.zs_gen);
         }
-
         fflush(stdout);
 
     }
