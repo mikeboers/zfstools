@@ -60,16 +60,22 @@ def main():
 
     code = 0
 
-    for line in subprocess.check_output(['sudo', 'zfs', 'list', '-H', '-o', 'name,autosnap:autosnap,autosnap:autoprune']).splitlines():
+    for line in subprocess.check_output(['sudo', 'zfs', 'list', '-H', '-o', 'name,autosnap:autosnap,autosnap:autoprune,autosnap:maxage']).splitlines():
         
         line = line.strip().decode()
         if not line:
             continue
 
-        volume, is_auto_snap, is_auto_prune = line.strip().split('\t')
+        volume, is_auto_snap, is_auto_prune, maxage = line.strip().split('\t')
 
         is_auto_snap  = is_auto_snap.upper() in ('1', 'Y', 'YES', 'T', 'TRUE', 'ON')
         is_auto_prune = is_auto_prune.upper() in ('1', 'Y', 'YES', 'T', 'TRUE', 'ON')
+        
+        try:
+            maxage = int(maxage) if maxage != '-' else None
+        except ValueError as e:
+            print("Malformed maxage ({}); ignoring.".format(maxage))
+            maxage = None
 
         do_this_snap = is_auto_snap
         do_this_prune = do_this_snap or is_auto_prune
@@ -195,7 +201,7 @@ def main():
                 destroy(snapshot)
                 snapshots.pop(i)
 
-        labels = label_snapshots([x[:2] for x in snapshots])
+        labels = label_snapshots([x[:2] for x in snapshots], maxage=maxage)
 
         for snapshot, raw_ctime, used, nonempty in sorted(snapshots):
             label = labels.get(snapshot)

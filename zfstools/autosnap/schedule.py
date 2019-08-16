@@ -22,7 +22,7 @@ def parse_datetime(input_):
         return datetime.datetime(*ints)
 
 
-def label_snapshots(snapshots):
+def label_snapshots(snapshots, maxage=None):
     """Label the given snapshots with what retention period they cover.
 
     Labels are:
@@ -31,7 +31,7 @@ def label_snapshots(snapshots):
     - ``all`` for last week;
     - ``daily`` for last 2 weeks;
     - ``weekly`` for last ~2 months;
-    - ``montly`` forever;
+    - ``monthly`` forever;
     - ``first`` for the first.
 
     :param snapshots: List of ``(ctime, name)`` tuples representing a set of
@@ -39,6 +39,8 @@ def label_snapshots(snapshots):
     :returns: Dict mapping ``name`` to a label (if the snapshot is to be kept).
 
     """
+
+    print('maxage', maxage)
 
     # TODO: What timezone should this be in?
     now = datetime.datetime.now()
@@ -61,6 +63,10 @@ def label_snapshots(snapshots):
                 continue
 
         days = (now - ctime).days
+
+        # There is a requested maximum.
+        if maxage is not None and days > maxage:
+            continue
 
         # Monthly forever.
         if True:
