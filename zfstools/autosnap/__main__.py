@@ -60,22 +60,16 @@ def main():
 
     code = 0
 
-    for line in subprocess.check_output(['sudo', 'zfs', 'list', '-H', '-o', 'name,autosnap:autosnap,autosnap:autoprune,autosnap:maxage']).splitlines():
+    for line in subprocess.check_output(['sudo', 'zfs', 'list', '-H', '-o', 'name,autosnap:autosnap,autosnap:autoprune']).splitlines():
         
         line = line.strip().decode()
         if not line:
             continue
 
-        volume, is_auto_snap, is_auto_prune, maxage = line.strip().split('\t')
+        volume, is_auto_snap, is_auto_prune = line.strip().split('\t')
 
         is_auto_snap  = is_auto_snap.upper() in ('1', 'Y', 'YES', 'T', 'TRUE', 'ON')
         is_auto_prune = is_auto_prune.upper() in ('1', 'Y', 'YES', 'T', 'TRUE', 'ON')
-        
-        try:
-            maxage = int(maxage) if maxage != '-' else None
-        except ValueError as e:
-            print("Malformed maxage ({}); ignoring.".format(maxage))
-            maxage = None
 
         do_this_snap = is_auto_snap
         do_this_prune = do_this_snap or is_auto_prune
@@ -123,20 +117,25 @@ def main():
         for line in subprocess.check_output(['sudo', 'zfs', 'list',
             '-t', 'snapshot',
             '-r', '-d', '1',
-            '-Hp', '-o', 'name,used,autosnap:_nonempty',
+            '-Hp', '-o', 'name,used,autosnap:maxage,autosnap:_nonempty',
             volume,
         ]).splitlines():
             line = line.strip().decode()
             if not line:
                 continue
-            snapshot, used, nonempty = line.split('\t')
+            snapshot, used, maxage, nonempty = (x.strip() for x in line.split('\t'))
+            try:
+                maxage = None if maxage == '-' else int(maxage)
+            except ValueError:
+                print(f"Snapshot {snapshot} has malformed maxage {maxage!r}")
+                maxage = None
             raw_ctime = snapshot.split('@', 1)[1]
             ctime = parse_datetime(raw_ctime)
             if not ctime:
                 if args.verbose > 1:
                     print('Could not parse:', snapshot)
                 continue
-            snapshots.append((snapshot, ctime, int(used), nonempty))
+            snapshots.append((snapshot, ctime, maxage, int(used), nonempty))
 
         snapshots.sort()
 
@@ -144,7 +143,7 @@ def main():
             # Skip the last, and go backwards so we can pop them out
             # of the master list.
             to_check = reversed(list(enumerate(snapshots))[:-1])
-            for i, (snapshot, raw_ctime, used, nonempty) in to_check:
+            for i, (snapshot, raw_ctime, maxage, used, nonempty) in to_check:
 
                 if args.verbose > 1:
                     print('%s -> %s' % (snapshot, used))
@@ -201,12 +200,12 @@ def main():
                 destroy(snapshot)
                 snapshots.pop(i)
 
-        labels = label_snapshots([x[:2] for x in snapshots], maxage=maxage)
+        labels = label_snapshots([x[:3] for x in snapshots])
 
-        for snapshot, raw_ctime, used, nonempty in sorted(snapshots):
+        for snapshot, raw_ctime, maxage, used, nonempty in sorted(snapshots):
             label = labels.get(snapshot)
             if args.verbose:
-                print('%7s %s' % (label or '-', snapshot))
+                print(f'{label or "-":7s} {snapshot}')
             if not label:
                 destroy(snapshot)
 
